@@ -27,6 +27,7 @@ import {
   ShieldAlert,
   Info
 } from 'lucide-react';
+import { GoogleGenAI, Type } from "@google/genai";
 import { 
   BarChart, 
   Bar, 
@@ -136,6 +137,8 @@ export default function App() {
   const [aiProvider, setAiProvider] = useState<'google' | 'groq'>('google');
   const [pendingExtractions, setPendingExtractions] = useState<any[]>([]);
   
+  const aiRef = useRef<GoogleGenAI | null>(null);
+
   // Custom UI Feedback State
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
@@ -384,23 +387,85 @@ export default function App() {
       reader.readAsDataURL(file);
       const base64 = await base64Promise;
 
-      const res = await fetch("/api/ai-extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          base64,
-          mimeType: file.type,
-          provider: aiProvider
-        })
-      });
+      let extracted: any[] = [];
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Erreur serveur: ${res.status}`);
+      if (aiProvider === 'google') {
+        const geminiKey = process.env.GEMINI_API_KEY;
+        if (!geminiKey) {
+            throw new Error("Clé API Gemini manquante. Veuillez la configurer dans les paramètres (GEMINI_API_KEY).");
+        }
+
+        if (!aiRef.current) {
+          aiRef.current = new GoogleGenAI({ apiKey: geminiKey });
+        }
+        
+        try {
+            const response = await aiRef.current.models.generateContent({
+              model: "gemini-3-flash-preview",
+              contents: [
+                {
+                  parts: [
+                    {
+                      inlineData: {
+                        data: base64,
+                        mimeType: file.type
+                      }
+                    },
+                    {
+                      text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
+                      Pour chaque élément trouvé, donne :
+                      1. Le nom unique identifiant (ex: DALLE D1, POUTRE P2).
+                      2. L'épaisseur ou profondeur brute en millimètres (mm).
+                      3. Le type : "DALLE" ou "POUTRE".
+                      
+                      Réponds UNIQUEMENT avec un tableau JSON valide.`
+                    }
+                  ]
+                }
+              ],
+              config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      name: { type: Type.STRING },
+                      thickness: { type: Type.NUMBER },
+                      type: { type: Type.STRING, enum: ["DALLE", "POUTRE"] }
+                    },
+                    required: ["name", "thickness", "type"]
+                  }
+                }
+              }
+            });
+            extracted = JSON.parse(response.text);
+        } catch (apiErr: any) {
+            if (apiErr.message?.includes("API_KEY_INVALID")) {
+                throw new Error("Clé API Gemini invalide. Veuillez vérifier votre clé dans les paramètres.");
+            }
+            throw apiErr;
+        }
+      } else {
+        // Groq still goes through the proxy to handle CORS
+        const res = await fetch("/api/ai-extract", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            base64,
+            mimeType: file.type,
+            provider: aiProvider
+          })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Erreur serveur: ${res.status}`);
+        }
+
+        const data = await res.json();
+        extracted = data.elements || [];
       }
-
-      const { elements } = await res.json();
-      const extracted = elements || [];
 
       if (extracted.length === 0) {
         showToast("Aucune donnée détectée. Essayez une image plus claire.", "info");
@@ -442,9 +507,9 @@ export default function App() {
 
       setPendingExtractions(prev => [...newElements, ...prev]);
       showToast(`${newElements.length} éléments en attente de validation`, "success");
-    } catch (err) {
-      console.error(err);
-      showToast("Erreur lors de l'analyse IA.", "error");
+    } catch (err: any) {
+      console.error("Extraction error:", err);
+      showToast(`Analyse échouée: ${err.message || 'Erreur inconnue'}`, "error");
     } finally {
       setIsAiLoading(false);
     }
@@ -465,6 +530,19 @@ export default function App() {
   const rejectExtraction = (id: number) => {
     setPendingExtractions(prev => prev.filter(e => e.id !== id));
     showToast("Détection IA rejetée", "info");
+  };
+
+  const clearAllExtractions = () => {
+    if (pendingExtractions.length === 0) return;
+    setConfirmModal({
+      show: true,
+      title: "Vider la liste",
+      message: `Voulez-vous rejeter les ${pendingExtractions.length} détections en attente ?`,
+      onConfirm: () => {
+        setPendingExtractions([]);
+        showToast("Liste vidée", "info");
+      }
+    });
   };
 
   const summaryText = `
@@ -669,6 +747,14 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                       <div className="bg-surface border border-border rounded-[10px] shadow-sm flex flex-col overflow-hidden">
                         <div className="px-5 py-4 border-b border-border flex justify-between items-center shrink-0">
                            <span className="text-[12px] font-bold uppercase tracking-widest text-text-muted font-serif italic">📋 Validation IA ({pendingExtractions.length})</span>
+                           {pendingExtractions.length > 0 && (
+                              <button 
+                                onClick={clearAllExtractions}
+                                className="text-[10px] font-bold text-danger hover:underline uppercase tracking-tighter"
+                              >
+                                Tout rejeter
+                              </button>
+                           )}
                         </div>
                         <div className="flex-1 overflow-y-auto p-4 scroller-hidden space-y-3 bg-ai-accent/5">
                            {pendingExtractions.length === 0 ? (
