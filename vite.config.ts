@@ -9,8 +9,7 @@ export default defineConfig(({mode}) => {
     base: './',
     plugins: [react(), tailwindcss()],
     define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || env.VITE_GEMINI_API_KEY),
-      'process.env.XAI_API_KEY': JSON.stringify(env.XAI_API_KEY || env.VITE_XAI_API_KEY),
+      'process.env.APP_URL': JSON.stringify(env.APP_URL),
     },
     resolve: {
       alias: {

@@ -1,8 +1,10 @@
+@import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@1,300;1,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", "Courier New", monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-serif: "Crimson Pro", serif;
   
   --color-bg: #f1f5f9;
   --color-surface: #ffffff;

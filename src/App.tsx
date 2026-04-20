@@ -20,9 +20,25 @@ import {
   Settings,
   MoreVertical,
   History,
-  FileDown
+  FileDown,
+  ChevronRight,
+  Zap,
+  ShieldCheck,
+  ShieldAlert,
+  Info
 } from 'lucide-react';
-import { GoogleGenAI, Type } from "@google/genai";
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  Cell,
+  PieChart,
+  Pie
+} from 'recharts';
 
 // --- Constants ---
 const PLY = { KS: 0.418, I: 0.167, lbQ: 5.621, Fb: 1545, Frs: 82, E: 1500000 };
@@ -37,6 +53,31 @@ const BEAM_CAP: Record<number, number> = { 4: 2620, 5: 2020, 6: 1408, 7: 1404 };
 const FRAME_CAP = 10000;
 const CONCRETE_PCF = 150;
 const DEFLECTION_LIMIT = 360;
+
+// --- Helper Components ---
+const CapacityIndicator = ({ value, label, limit, unit = "PSF" }: { value: number; label: string; limit: number; unit?: string }) => {
+  const ratio = (value / limit) * 100;
+  const isOver = value > limit;
+  
+  return (
+    <div className="space-y-1.5 flex-1">
+      <div className="flex justify-between items-end text-[9px] font-black uppercase tracking-widest leading-none">
+        <span className="text-text-muted">{label}</span>
+        <span className={isOver ? 'text-danger' : 'text-accent'}>{fmt(value, 0)} / {fmt(limit, 0)} {unit}</span>
+      </div>
+      <div className="h-2 bg-bg rounded-full overflow-hidden border border-border/50">
+        <motion.div 
+          initial={{ width: 0 }}
+          animate={{ width: `${Math.min(ratio, 100)}%` }}
+          className={`h-full transition-colors duration-500 ${isOver ? 'bg-danger shadow-[0_0_8px_rgba(239,68,68,0.4)]' : 'bg-accent shadow-[0_0_8px_rgba(37,99,235,0.3)]'}`}
+        />
+      </div>
+      <div className="text-[8px] font-bold text-right opacity-60">
+        {fmt(ratio, 1)}% UTILISÉ
+      </div>
+    </div>
+  );
+};
 
 // --- Types ---
 type ElementType = 'DALLE' | 'POUTRE';
@@ -92,7 +133,7 @@ export default function App() {
   
   const [editingId, setEditingId] = useState<number | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiProvider, setAiProvider] = useState<'google' | 'xai'>('google');
+  const [aiProvider, setAiProvider] = useState<'google' | 'groq'>('google');
   const [pendingExtractions, setPendingExtractions] = useState<any[]>([]);
   
   // Custom UI Feedback State
@@ -130,8 +171,6 @@ export default function App() {
   const [formSpan, setFormSpan] = useState(7);
   const [formSType, setFormSType] = useState("double");
   const [formChoix, setFormChoix] = useState(48);
-
-  const aiRef = useRef<GoogleGenAI | null>(null);
 
   // Persistence
   useMemo(() => {
@@ -336,18 +375,6 @@ export default function App() {
 
   // --- AI Logic ---
   const handleAiExtraction = async (file: File) => {
-    const geminiKey = process.env.GEMINI_API_KEY;
-    const xaiKey = process.env.XAI_API_KEY;
-    
-    if (aiProvider === 'google' && !geminiKey) {
-      showToast("Clé API Gemini manquante. Configurez GEMINI_API_KEY.", "error");
-      return;
-    }
-    if (aiProvider === 'xai' && !xaiKey) {
-      showToast("Clé API xAI (Grok) manquante. Configurez XAI_API_KEY.", "error");
-      return;
-    }
-
     setIsAiLoading(true);
     try {
       const reader = new FileReader();
@@ -357,100 +384,24 @@ export default function App() {
       reader.readAsDataURL(file);
       const base64 = await base64Promise;
 
-      let extracted: any[] = [];
+      const res = await fetch("/api/ai-extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base64,
+          mimeType: file.type,
+          provider: aiProvider
+        })
+      });
 
-      if (aiProvider === 'google') {
-        if (!aiRef.current) {
-          aiRef.current = new GoogleGenAI({ apiKey: geminiKey! });
-        }
-        const response = await aiRef.current.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: [
-            {
-              parts: [
-                {
-                  inlineData: {
-                    data: base64,
-                    mimeType: file.type
-                  }
-                },
-                {
-                  text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
-                  Pour chaque élément trouvé, donne :
-                  1. Le nom unique identifiant (ex: DALLE D1, POUTRE P2).
-                  2. L'épaisseur ou profondeur brute en millimètres (mm).
-                  3. Le type : "DALLE" ou "POUTRE".
-                  
-                  Réponds UNIQUEMENT avec un tableau JSON valide.
-                  Exemple: [{"name": "Dalle 1", "thickness": 200, "type": "DALLE"}]
-                  Si tu ne trouves rien, renvoie un tableau vide [].`
-                }
-              ]
-            }
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  name: { type: Type.STRING },
-                  thickness: { type: Type.NUMBER },
-                  type: { type: Type.STRING, enum: ["DALLE", "POUTRE"] }
-                },
-                required: ["name", "thickness", "type"]
-              }
-            }
-          }
-        });
-        extracted = JSON.parse(response.text);
-      } else {
-        // xAI (Grok) Vision API Call
-        const res = await fetch("https://api.x.ai/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${xaiKey}`
-          },
-          body: JSON.stringify({
-            model: "grok-2-vision-1212",
-            messages: [
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "text",
-                    text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
-                    Pour chaque élément trouvé, donne :
-                    1. Le nom unique identifiant (ex: DALLE D1, POUTRE P2).
-                    2. L'épaisseur ou profondeur brute en millimètres (mm).
-                    3. Le type : "DALLE" ou "POUTRE".
-                    
-                    Réponds UNIQUEMENT avec un tableau JSON valide.
-                    Exemple: [{"name": "Dalle 1", "thickness": 200, "type": "DALLE"}]
-                    Si tu ne trouves rien, renvoie un tableau vide [].`
-                  },
-                  {
-                    type: "image_url",
-                    image_url: {
-                      url: `data:${file.type};base64,${base64}`
-                    }
-                  }
-                ]
-              }
-            ],
-            response_format: { type: "json_object" }
-          })
-        });
-
-        if (!res.ok) throw new Error(`xAI Error: ${res.statusText}`);
-        const data = await res.json();
-        const content = data.choices[0].message.content;
-        // The result might be wrapped in an object or just the array
-        const parsed = JSON.parse(content);
-        extracted = Array.isArray(parsed) ? parsed : (parsed.elements || parsed.items || []);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Erreur serveur: ${res.status}`);
       }
+
+      const { elements } = await res.json();
+      const extracted = elements || [];
+
       if (extracted.length === 0) {
         showToast("Aucune donnée détectée. Essayez une image plus claire.", "info");
         return;
@@ -645,11 +596,11 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
               className="bg-sidebar border border-white/10 rounded px-1 py-0.5 text-[9px] outline-none"
             >
               <option value="google">GEMINI (Google)</option>
-              <option value="xai">GROK (xAI)</option>
+              <option value="groq">GROQ (Llama-3)</option>
             </select>
           </div>
           <p className="text-[11px] text-white/70 leading-relaxed">
-            Analyse vos plans PDF/IMG. Configurez vos clés API pour utiliser Gemini ou Grok.
+            Analyse vos plans PDF/IMG. Configurez vos clés API pour utiliser Gemini ou Groq.
           </p>
           <div className="mt-3 text-[10px] font-mono opacity-50">Status: {isAiLoading ? 'Analyse...' : 'Prêt à analyser'}</div>
         </div>
@@ -660,7 +611,7 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
         {/* Header Bar */}
         <div className="flex justify-between items-center mb-1">
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight">
+            <h1 className="text-2xl font-black tracking-tight font-serif italic text-accent/80">
               {activeTab === 'dashboard' ? 'Aperçu du Projet' : (activeTab === 'dalle' ? 'Coffrage de Dalle' : 'Coffrage de Poutre')}
             </h1>
             <p className="text-text-muted text-sm mt-0.5">
@@ -686,7 +637,7 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                 <div className="flex flex-col gap-5 overflow-hidden">
                    <div className="bg-surface border border-border rounded-[10px] p-6 shadow-sm overflow-hidden flex flex-col shrink-0">
                       <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-sm font-bold text-text-muted uppercase tracking-wider">État Global du Projet</h2>
+                        <h2 className="text-sm font-bold text-text-muted uppercase tracking-wider font-serif italic">Missions de Calcul en Cours</h2>
                         <div className="flex gap-4">
                            <button onClick={clearProject} className="text-danger hover:underline text-[11px] font-bold flex items-center gap-1">
                               <Trash size={12} /> Réinitialiser
@@ -717,7 +668,7 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1 overflow-hidden">
                       <div className="bg-surface border border-border rounded-[10px] shadow-sm flex flex-col overflow-hidden">
                         <div className="px-5 py-4 border-b border-border flex justify-between items-center shrink-0">
-                           <span className="text-[12px] font-bold uppercase tracking-widest text-text-muted">📋 Validation IA ({pendingExtractions.length})</span>
+                           <span className="text-[12px] font-bold uppercase tracking-widest text-text-muted font-serif italic">📋 Validation IA ({pendingExtractions.length})</span>
                         </div>
                         <div className="flex-1 overflow-y-auto p-4 scroller-hidden space-y-3 bg-ai-accent/5">
                            {pendingExtractions.length === 0 ? (
@@ -728,9 +679,9 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                            ) : (
                               pendingExtractions.map(el => (
                                  <div key={el.id} className="bg-white border border-ai-accent/20 rounded-lg p-3 shadow-sm flex flex-col gap-2">
-                                    <div className="flex justify-between items-center">
+                                    <div className="flex justify-between items-center text-ai-accent">
                                        <span className="font-bold text-[13px]">{el.params.name}</span>
-                                       <span className="bg-ai-accent text-white text-[8px] font-black px-1.5 py-0.5 rounded uppercase">Détection IA</span>
+                                       <span className="bg-ai-accent/10 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter">Détection IA</span>
                                     </div>
                                     <div className="flex gap-4 text-[10px] uppercase font-bold text-text-muted">
                                        <span>Type: {el.params.type}</span>
@@ -741,7 +692,7 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                                           onClick={() => approveExtraction(el.id)}
                                           className="flex-1 bg-success text-white py-1.5 rounded font-bold text-[11px] hover:filter hover:brightness-105 transition-all flex items-center justify-center gap-1"
                                        >
-                                          <Check size={12} /> Valider & Ajouter
+                                          <Check size={12} /> Valider
                                        </button>
                                        <button 
                                           onClick={() => rejectExtraction(el.id)}
@@ -758,34 +709,45 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
 
                       <div className="bg-surface border border-border rounded-[10px] shadow-sm flex flex-col overflow-hidden">
                           <div className="px-5 py-4 border-b border-border flex justify-between items-center shrink-0">
-                            <span className="text-[12px] font-bold uppercase tracking-widest text-text-muted">Inventaire des Éléments</span>
+                            <span className="text-[12px] font-bold uppercase tracking-widest text-accent font-serif italic">Inventaire des Éléments ({projectData.elements.length})</span>
                           </div>
-                          <div className="flex-1 overflow-y-auto p-2 scroller-hidden">
+                          <div className="flex-1 overflow-y-auto p-4 scroller-hidden">
                             {projectData.elements.length === 0 ? (
                               <div className="h-full flex flex-col items-center justify-center opacity-40 text-center p-10">
                                 <Box size={40} strokeWidth={1} className="mb-3" />
-                                <p className="text-sm font-bold">Aucun élément actif</p>
+                                <p className="text-sm font-bold">Aucun élément</p>
                               </div>
                             ) : (
-                              <div className="space-y-2">
+                              <div className="space-y-3">
                                 {projectData.elements.map(el => (
-                                  <div key={el.id} className="bg-bg/10 border border-border/50 hover:border-accent/30 rounded-lg p-3 transition-colors flex items-center justify-between group">
+                                  <div 
+                                    key={el.id} 
+                                    onClick={() => startEdit(el.id)}
+                                    className="bg-bg/5 hover:bg-white border-2 border-transparent hover:border-accent/40 rounded-xl p-4 transition-all cursor-pointer flex items-center justify-between group shadow-sm hover:shadow-lg"
+                                  >
                                     <div className="flex items-center gap-4">
-                                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${el.params.type==='DALLE'?'bg-yellow/10 text-yellow':'bg-blue/10 text-blue'}`}>
+                                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold shadow-sm ${el.params.type==='DALLE'?'bg-yellow/10 text-yellow':'bg-blue/10 text-blue'}`}>
                                           {el.params.type === 'DALLE' ? '▣' : '▬'}
                                        </div>
                                        <div>
                                           <div className="flex items-center gap-2">
-                                            <span className="font-bold text-[13px] tracking-tight">{el.params.name}</span>
+                                            <span className="font-black text-[15px] tracking-tight">{el.params.name}</span>
+                                            {el.isAi && <span className="bg-ai-accent/10 text-ai-accent text-[7px] font-black px-1 py-0.5 rounded uppercase">IA</span>}
                                           </div>
-                                          <div className="text-[9px] font-bold text-text-muted uppercase tracking-wider">
-                                             {el.params.epMax}mm • {el.total} psf
+                                          <div className="text-[10px] font-bold text-text-muted uppercase tracking-widest flex items-center gap-3 mt-0.5">
+                                             <span>{el.params.epMax}mm • {el.params.type}</span>
+                                             <span className="text-accent font-black">{el.total} PSF</span>
                                           </div>
                                        </div>
                                     </div>
-                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                       <button onClick={() => startEdit(el.id)} className="p-1.5 hover:bg-bg rounded transition-colors"><Settings size={12} /></button>
-                                       <button onClick={() => deleteElement(el.id)} className="p-1.5 hover:bg-danger-bg hover:text-danger rounded transition-colors"><Trash2 size={12} /></button>
+                                    <div className="flex items-center gap-2">
+                                       <div className="bg-accent text-white px-2 py-1 rounded text-[9px] font-black uppercase opacity-0 group-hover:opacity-100 transition-opacity">Modifier</div>
+                                       <button 
+                                          onClick={(e) => { e.stopPropagation(); deleteElement(el.id); }} 
+                                          className="p-2 text-text-muted hover:text-danger hover:bg-danger-bg rounded-lg transition-colors"
+                                       >
+                                          <Trash2 size={16} />
+                                       </button>
                                     </div>
                                   </div>
                                 ))}
@@ -799,7 +761,7 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                 <div className="flex flex-col gap-5 overflow-hidden">
                    <div className="flex flex-col gap-2 shrink-0">
                       <div className="flex justify-between items-center mb-1">
-                        <h3 className="text-[11px] font-bold text-text-muted uppercase tracking-[0.1em]">Scanneur de Plan IA</h3>
+                        <h3 className="text-[11px] font-bold text-text-muted uppercase tracking-[0.1em] font-serif italic">Scanneur de Plan IA</h3>
                         <div className="flex items-center gap-2">
                            <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest">Moteur :</span>
                            <select 
@@ -808,7 +770,7 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                              className="bg-surface border border-border rounded px-1.5 py-0.5 text-[9px] font-bold text-accent outline-none"
                            >
                              <option value="google">Google Gemini</option>
-                             <option value="xai">xAI Grok</option>
+                             <option value="groq">Groq Llama-3</option>
                            </select>
                         </div>
                       </div>
@@ -862,6 +824,31 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5 flex-1 overflow-hidden">
             {/* Dashboard Columns for Tool Mode */}
             <div className="flex flex-col gap-5 overflow-y-auto scroller-hidden pr-1">
+               <div className="bg-surface border border-border rounded-[10px] p-6 shadow-sm mb-4">
+                  <div className="flex justify-between items-center mb-6">
+                     <h3 className="text-xs font-bold text-text-muted uppercase tracking-widest">Résultats Analytiques</h3>
+                     <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 ${calculations.okAlu ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
+                        {calculations.okAlu ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
+                        STATUT : {calculations.okAlu ? 'SÉCURISÉ' : 'DANGER'}
+                     </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 gap-8 mb-6">
+                     <CapacityIndicator 
+                       label="Utilisation Capacité Alu-Beam" 
+                       value={calculations.loadAlu} 
+                       limit={calculations.capAlu} 
+                       unit="LBS" 
+                     />
+                     <CapacityIndicator 
+                       label="Utilisation Espacement Bois" 
+                       value={formChoix} 
+                       limit={calculations.lm_wood} 
+                       unit="PO" 
+                     />
+                  </div>
+               </div>
+
                <div className="bg-surface border border-border rounded-[10px] p-6 shadow-sm">
                   <div className="flex justify-between items-center mb-6">
                      <h2 className="text-[13px] font-bold text-text-muted uppercase tracking-widest">Configuration de l'Élément</h2>
