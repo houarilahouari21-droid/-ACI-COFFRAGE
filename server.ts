@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import Groq from "groq-sdk";
 
 dotenv.config();
 
@@ -26,45 +27,36 @@ async function startServer() {
         const groqKey = process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY;
         if (!groqKey) return res.status(500).json({ error: "GROQ_API_KEY manquante sur le serveur. Configurez-la dans les paramètres." });
 
-        const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${groqKey}`
-          },
-          body: JSON.stringify({
-            model: "llama-3.2-11b-vision-preview",
-            messages: [
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "text",
-                    text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
-                    IMPORTANT: Tu dois retourner UNIQUEMENT un objet JSON avec une clé "elements" contenant la liste des objets.
-                    Chaque objet doit avoir: "name" (string), "thickness" (number, mm), "type" (DALLE ou POUTRE).
-                    Si tu ne trouves rien, renvoie { "elements": [] }.`
-                  },
-                  {
-                    type: "image_url",
-                    image_url: {
-                      url: `data:${mimeType || "image/jpeg"};base64,${base64}`
-                    }
+        const groq = new Groq({ apiKey: groqKey });
+
+        const completion = await groq.chat.completions.create({
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
+                  IMPORTANT: Tu dois retourner UNIQUEMENT un objet JSON avec une clé "elements" contenant la liste des objets.
+                  Chaque objet doit avoir: "name" (string), "thickness" (number, mm), "type" (DALLE ou POUTRE).
+                  Si tu ne trouves rien, renvoie { "elements": [] }.`
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:${mimeType || "image/jpeg"};base64,${base64}`
                   }
-                ]
-              }
-            ],
-            response_format: { type: "json_object" }
-          })
+                }
+              ]
+            }
+          ],
+          model: "llama-3.3-70b-versatile",
+          response_format: { type: "json_object" }
         });
 
-        if (!groqRes.ok) {
-          const errData = await groqRes.json().catch(() => ({ error: { message: groqRes.statusText } }));
-          throw new Error(errData.error?.message || "Erreur Groq");
-        }
+        const content = completion.choices[0].message.content;
+        if (!content) throw new Error("Aucune réponse de l'IA.");
 
-        const data = await groqRes.json();
-        const content = data.choices[0].message.content;
         const parsed = JSON.parse(content);
         res.json({ elements: parsed.elements || [] });
       } else {
