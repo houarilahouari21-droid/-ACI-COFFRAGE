@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, ChangeEvent } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect, ChangeEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Building2, 
@@ -99,7 +99,9 @@ interface ElementParams {
 }
 
 interface ProjectData {
+  id: string;
   name: string;
+  updatedAt: string;
   elements: {
     id: number;
     params: ElementParams;
@@ -120,18 +122,92 @@ const safeDiv = (a: number, b: number, f = 0) => b === 0 || !isFinite(b) ? f : a
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'dalle' | 'poutre'>('dashboard');
-  const [projectData, setProjectData] = useState<ProjectData>(() => {
-    const saved = localStorage.getItem('coffrageProject');
+  
+  const [allProjects, setAllProjects] = useState<ProjectData[]>(() => {
+    const saved = localStorage.getItem('coffrageProjects');
     if (saved) {
       try {
         return JSON.parse(saved);
       } catch (e) {
-        console.error("Error parsing saved project", e);
+        console.error("Error parsing saved projects", e);
       }
     }
-    return { name: "Projet_Coffrage", elements: [] };
+    const defaultProject = { 
+      id: 'PRJ-' + Math.random().toString(36).substr(2, 6).toUpperCase(),
+      name: "Résidences Beaumont", 
+      elements: [],
+      updatedAt: new Date().toISOString()
+    };
+    return [defaultProject];
   });
-  
+
+  const [currentProjectId, setCurrentProjectId] = useState<string>(allProjects[0].id);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [tempName, setTempName] = useState("");
+
+  const projectData = useMemo(() => {
+    return allProjects.find(p => p.id === currentProjectId) || allProjects[0];
+  }, [allProjects, currentProjectId]);
+
+  const setProjectData = useCallback((updater: (prev: ProjectData) => ProjectData) => {
+    setAllProjects(prev => prev.map(p => {
+      if (p.id === currentProjectId) {
+        const updated = updater(p);
+        return { ...updated, updatedAt: new Date().toISOString() };
+      }
+      return p;
+    }));
+  }, [currentProjectId]);
+
+  useEffect(() => {
+    localStorage.setItem('coffrageProjects', JSON.stringify(allProjects));
+  }, [allProjects]);
+
+  const createNewProject = () => {
+    const newProj: ProjectData = {
+      id: 'PRJ-' + Math.random().toString(36).substr(2, 6).toUpperCase(),
+      name: "Nouveau Projet " + (allProjects.length + 1),
+      elements: [],
+      updatedAt: new Date().toISOString()
+    };
+    setAllProjects(prev => [newProj, ...prev]);
+    setCurrentProjectId(newProj.id);
+    setActiveTab('dashboard');
+    showToast("Nouveau projet créé");
+  };
+
+  const deleteProject = (id: string) => {
+    if (allProjects.length <= 1) {
+      showToast("Impossible de supprimer le dernier projet", "error");
+      return;
+    }
+    setConfirmModal({
+      show: true,
+      title: "Supprimer le projet",
+      message: "Cette action est irréversible. Toutes les données du projet seront perdues.",
+      onConfirm: () => {
+        setAllProjects(prev => prev.filter(p => p.id !== id));
+        if (currentProjectId === id) {
+          setCurrentProjectId(allProjects.find(p => p.id !== id)!.id);
+        }
+        showToast("Projet supprimé", "info");
+      }
+    });
+  };
+
+  const startRenaming = () => {
+    setTempName(projectData.name);
+    setIsRenaming(true);
+  };
+
+  const saveRename = () => {
+    if (tempName.trim()) {
+      setProjectData(prev => ({ ...prev, name: tempName.trim() }));
+      setIsRenaming(false);
+      showToast("Projet renommé");
+    }
+  };
+
   const [editingId, setEditingId] = useState<number | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiProvider, setAiProvider] = useState<'google' | 'groq'>('google');
@@ -175,10 +251,11 @@ export default function App() {
   const [formSType, setFormSType] = useState("double");
   const [formChoix, setFormChoix] = useState(48);
 
-  // Persistence
-  useMemo(() => {
-    localStorage.setItem('coffrageProject', JSON.stringify(projectData));
-  }, [projectData]);
+  // --- Persistence Legacy Cleanup ---
+  useEffect(() => {
+    // We only use coffrageProjects now
+    localStorage.removeItem('coffrageProject');
+  }, []);
 
   // Calculations
   const calculations = useMemo(() => {
@@ -626,9 +703,18 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
           </div>
         </div>
 
-        <nav className="space-y-8 flex-1">
+        <nav className="space-y-8 flex-1 overflow-y-auto scroller-hidden">
           <div>
-            <div className="text-[10px] uppercase tracking-widest text-white/40 font-bold mb-4">Projets</div>
+            <div className="flex justify-between items-center mb-4 pr-2">
+              <div className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Projets Actifs</div>
+              <button 
+                onClick={createNewProject}
+                className="w-6 h-6 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+                title="Nouveau Projet"
+              >
+                <Plus size={14} />
+              </button>
+            </div>
             <div className="space-y-1">
               <button 
                 onClick={() => setActiveTab('dashboard')}
@@ -637,8 +723,30 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
               >
                 <LayoutDashboard size={16} /> Dashboard Global
               </button>
-              <div className="w-full flex items-center gap-3 p-3 rounded-lg text-[13px] font-medium text-white/30 cursor-not-allowed">
-                <Box size={16} /> Résidences Beaumont
+              
+              <div className="mt-4 space-y-1 max-h-[200px] overflow-y-auto pr-1">
+                {allProjects.map(proj => (
+                  <div key={proj.id} className="group flex items-center gap-1">
+                    <button 
+                      onClick={() => {
+                        setCurrentProjectId(proj.id);
+                        setActiveTab('dashboard');
+                      }}
+                      className={`flex-1 flex items-center gap-3 p-2.5 rounded-lg text-[12px] font-medium transition-all duration-200 truncate
+                      ${currentProjectId === proj.id ? 'bg-accent/20 text-accent border border-accent/20' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
+                    >
+                      <Box size={14} /> {proj.name}
+                    </button>
+                    {allProjects.length > 1 && (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); deleteProject(proj.id); }}
+                        className="p-2 text-white/0 group-hover:text-white/20 hover:text-danger/80 transition-all rounded-lg"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -687,24 +795,53 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
       {/* Main Content */}
       <main className="flex-1 flex flex-col p-6 gap-5 overflow-hidden">
         {/* Header Bar */}
-        <div className="flex justify-between items-center mb-1">
-          <div>
-            <h1 className="text-2xl font-black tracking-tight font-serif italic text-accent/80">
-              {activeTab === 'dashboard' ? 'Aperçu du Projet' : (activeTab === 'dalle' ? 'Coffrage de Dalle' : 'Coffrage de Poutre')}
-            </h1>
-            <p className="text-text-muted text-sm mt-0.5">
-              {activeTab === 'dashboard' ? projectData.name : 'Analyse de structure et calcul de charges d\'étaiement'}
-            </p>
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex-1">
+            {isRenaming ? (
+              <div className="flex items-center gap-2 animate-in fade-in duration-300">
+                <input 
+                  type="text" 
+                  autoFocus
+                  value={tempName}
+                  onChange={(e) => setTempName(e.target.value)}
+                  onBlur={saveRename}
+                  onKeyDown={(e) => e.key === 'Enter' && saveRename()}
+                  className="text-2xl font-black tracking-tight font-serif italic text-accent bg-transparent border-b-2 border-accent outline-none w-full max-w-md"
+                />
+                <button onClick={saveRename} className="p-1 text-success hover:bg-success/10 rounded-full"><Check size={20}/></button>
+              </div>
+            ) : (
+              <div 
+                onClick={startRenaming}
+                className="group cursor-pointer inline-flex flex-col animate-in slide-in-from-left duration-500"
+              >
+                <div className="flex items-center gap-2">
+                  <h1 className="text-2xl font-black tracking-tight font-serif italic text-accent/80 group-hover:text-accent transition-colors">
+                    {activeTab === 'dashboard' ? projectData.name : (activeTab === 'dalle' ? 'Coffrage de Dalle' : 'Coffrage de Poutre')}
+                  </h1>
+                  <Settings size={14} className="text-accent/0 group-hover:text-accent/40 transition-all" />
+                </div>
+                <p className="text-text-muted text-sm mt-0.5 flex items-center gap-2">
+                  {activeTab === 'dashboard' 
+                    ? `Dernière modification : ${new Date(projectData.updatedAt).toLocaleDateString('fr-FR')}` 
+                    : 'Analyse de structure et calcul de charges d\'étaiement'}
+                    {activeTab === 'dashboard' && <span className="text-[10px] text-accent/50 group-hover:block hidden underline italic">Cliquez pour renommer</span>}
+                </p>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <button 
               onClick={exportJSON}
-              className="px-4 py-2 bg-white border border-border rounded-full font-bold text-xs hover:bg-bg transition-colors flex items-center gap-2"
+              className="px-4 py-2 bg-white border border-border rounded-full font-bold text-xs hover:bg-bg transition-colors flex items-center gap-2 shadow-sm"
             >
-              <FileDown size={14} /> Exporter JSON
+              <FileDown size={14} /> Exporter Rapport
             </button>
-            <button className="px-5 py-2 bg-accent text-white rounded-full font-bold text-xs hover:filter hover:brightness-105 transition-all shadow-lg shadow-accent/20">
-              Enregistrer Projet
+            <button 
+              onClick={() => showToast("Données stockées localement")}
+              className="px-5 py-2 bg-accent text-white rounded-full font-bold text-xs hover:filter hover:brightness-105 transition-all shadow-lg shadow-accent/20"
+            >
+              Enregistré (Auto)
             </button>
           </div>
         </div>
@@ -1016,7 +1153,7 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                         className="flex-1 bg-accent text-white py-3 border rounded-lg font-bold text-[13px] hover:filter hover:brightness-105 shadow-lg shadow-accent/10 transition-all flex items-center justify-center gap-2"
                        >
                          {editingId ? <Settings size={16} /> : <Plus size={16} />} 
-                         {editingId ? 'Sauvegarder les Changements' : 'Ajouter à l\'Étude'}
+                         {editingId ? 'Enregistrer les modifications' : 'Ajouter à l\'étude'}
                        </button>
                        {editingId && (
                          <button onClick={resetForm} className="px-4 border border-border rounded-lg text-text-muted hover:bg-bg transition-colors">
