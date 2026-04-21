@@ -11,6 +11,7 @@ import {
   AlertTriangle, 
   Copy, 
   FileText,
+  FileUp,
   Sparkles,
   Loader2,
   Trash,
@@ -18,6 +19,7 @@ import {
   Box,
   Rows,
   Settings,
+  Settings2,
   MoreVertical,
   History,
   FileDown,
@@ -132,9 +134,28 @@ interface ProjectData {
   }[];
 }
 
+interface ExtractionCandidate {
+  modelName: string;
+  modelId: string;
+  elements: any[];
+}
+
 // --- Utils ---
 const fmt = (n: number | undefined, d = 2) => typeof n === "number" && isFinite(n) ? n.toFixed(d) : "—";
 const safeDiv = (a: number, b: number, f = 0) => b === 0 || !isFinite(b) ? f : a / b;
+
+const OPENROUTER_VISION_MODELS = [
+  { id: "google/gemini-2.0-flash-exp", name: "Gemini 2.0 Flash (Gratuit)", icon: "⚡" },
+  { id: "anthropic/claude-3.5-sonnet", name: "Claude 3.5 Sonnet", icon: "🧠" },
+  { id: "openai/gpt-4o", name: "GPT-4o (OpenAI)", icon: "🤖" },
+  { id: "google/gemini-pro-1.5", name: "Gemini 1.5 Pro", icon: "💎" },
+  { id: "openai/gpt-4o-mini", name: "GPT-4o Mini", icon: "🖱️" },
+  { id: "meta-llama/llama-3.2-11b-vision-instruct:free", name: "Llama 3.2 11B (Gratuit)", icon: "🐑" },
+  { id: "qwen/qwen-2-vl-7b-instruct", name: "Qwen 2 VL (Gratuit)", icon: "🐲" },
+  { id: "x-ai/grok-2-vision-1212", name: "Grok 2 Vision", icon: "🌌" },
+  { id: "mistralai/pixtral-12b", name: "Pixtral 12B", icon: "🌪️" },
+  { id: "meta-llama/llama-3.2-90b-vision-instruct", name: "Llama 3.2 90B", icon: "🦙" }
+];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'dalle' | 'poutre'>('dashboard');
@@ -165,11 +186,16 @@ export default function App() {
     return allProjects.find(p => p.id === currentProjectId) || allProjects[0];
   }, [allProjects, currentProjectId]);
 
-  const setProjectData = useCallback((updater: (prev: ProjectData) => ProjectData) => {
+  const setProjectData = useCallback((value: ProjectData | ((prev: ProjectData) => ProjectData)) => {
     setAllProjects(prev => prev.map(p => {
       if (p.id === currentProjectId) {
-        const updated = updater(p);
-        return { ...updated, updatedAt: new Date().toISOString() };
+        const updated = typeof value === 'function' ? (value as any)(p) : value;
+        return { 
+          ...p,
+          ...updated, 
+          id: p.id, // Garder l'ID du slot actuel
+          updatedAt: new Date().toISOString() 
+        };
       }
       return p;
     }));
@@ -222,23 +248,29 @@ export default function App() {
     }));
   }, [projectData.elements]);
 
+  const [extractionCandidates, setExtractionCandidates] = useState<ExtractionCandidate[]>([]);
+  const [selectedOrModels, setSelectedOrModels] = useState<string[]>(["anthropic/claude-3.5-sonnet", "google/gemini-pro-1.5", "openai/gpt-4o-mini"]);
+  const [selectedOrModel, setSelectedOrModel] = useState<string>("anthropic/claude-3.5-sonnet");
+  const [showOrConfig, setShowOrConfig] = useState(false);
+
   const deleteProject = (id: string) => {
     if (allProjects.length <= 1) {
       showToast("Impossible de supprimer le dernier projet", "error");
       return;
     }
-    setConfirmModal({
-      show: true,
-      title: "Supprimer le projet",
-      message: "Cette action est irréversible. Toutes les données du projet seront perdues.",
-      onConfirm: () => {
-        setAllProjects(prev => prev.filter(p => p.id !== id));
+    askConfirmation(
+      "Supprimer le projet",
+      "Voulez-vous vraiment supprimer ce projet ? Cette action est irréversible.",
+      () => {
+        const remaining = allProjects.filter(p => p.id !== id);
+        setAllProjects(remaining);
         if (currentProjectId === id) {
-          setCurrentProjectId(allProjects.find(p => p.id !== id)!.id);
+          setCurrentProjectId(remaining[0].id);
+          setActiveTab('dashboard');
         }
         showToast("Projet supprimé", "info");
       }
-    });
+    );
   };
 
   const startRenaming = () => {
@@ -454,11 +486,15 @@ export default function App() {
   };
 
   const clearProject = () => {
+    if (projectData.elements.length === 0) {
+      showToast("Le projet est déjà vide", "info");
+      return;
+    }
     askConfirmation(
       "Réinitialiser",
-      "Voulez-vous réinitialiser tout le projet ? Cette action est irréversible.",
+      "Voulez-vous réinitialiser tout le projet ? Cette action supprimera tous les éléments.",
       () => {
-        setProjectData({ name: "Projet_Coffrage", elements: [] });
+        setProjectData(prev => ({ ...prev, elements: [] }));
         resetForm();
         showToast("Projet réinitialisé", "info");
       }
@@ -484,6 +520,8 @@ export default function App() {
           setProjectData(d);
           resetForm();
           showToast("Projet importé avec succès");
+        } else {
+          showToast("Le fichier ne contient pas de données de projet valides", "error");
         }
       } catch (err) { 
         showToast("Fichier JSON invalide", "error"); 
@@ -523,8 +561,8 @@ export default function App() {
         }
         
         try {
-            const response = await aiRef.current.models.generateContent({
-              model: "gemini-2.0-flash",
+            const response = await aiRef.current.models.generateContent({ 
+              model: "gemini-3-flash-preview",
               contents: [
                 {
                   parts: [
@@ -562,7 +600,10 @@ export default function App() {
                 }
               }
             });
-            extracted = JSON.parse(response.text);
+            
+            const content = response.text;
+            if (!content) throw new Error("Aucune réponse de Gemini.");
+            extracted = JSON.parse(content);
         } catch (apiErr: any) {
             if (apiErr.message?.includes("API_KEY_INVALID")) {
                 throw new Error("Clé API Gemini invalide. Veuillez vérifier votre clé dans les paramètres.");
@@ -577,7 +618,8 @@ export default function App() {
           body: JSON.stringify({
             base64,
             mimeType: file.type,
-            provider: aiProvider
+            provider: aiProvider,
+            models: aiProvider === 'openrouter' ? [selectedOrModel] : undefined
           })
         });
 
@@ -587,6 +629,14 @@ export default function App() {
         }
 
         const data = await res.json();
+        
+        if (aiProvider === 'openrouter' && data.candidates) {
+          setExtractionCandidates(data.candidates);
+          showToast(`Plusieurs modèles ont répondu. Choisissez le meilleur résultat.`, "info");
+          setIsAiLoading(false);
+          return;
+        }
+        
         extracted = data.elements || [];
       }
 
@@ -653,6 +703,45 @@ export default function App() {
   const rejectExtraction = (id: number) => {
     setPendingExtractions(prev => prev.filter(e => e.id !== id));
     showToast("Détection IA rejetée", "info");
+  };
+
+  const applyCandidate = (candidate: ExtractionCandidate) => {
+    const newElements = candidate.elements.map((item: any, index: number) => {
+      const type = item.type === 'DALLE' ? 'DALLE' : 'POUTRE';
+      const thick = item.thickness || (type === 'DALLE' ? 200 : 400);
+      
+      const LD = { conc: (Math.ceil(thick / 25.4) / 12) * 150, total: (Math.ceil(thick / 25.4) / 12) * 150 + 8 + 50 };
+      
+      return {
+        id: Date.now() + index + Math.floor(Math.random() * 1000),
+        params: {
+          id: Date.now() + index + Math.floor(Math.random() * 1000),
+          type,
+          name: item.name,
+          isVar: false,
+          epMin: thick,
+          epMax: thick,
+          dd: 8,
+          dl: 50,
+          trib: 4,
+          span: type === 'DALLE' ? 7 : 6,
+          stype: "double",
+          cho: 48
+        },
+        total: Math.round(LD.total),
+        lm: "60.00",
+        ok_wood: true,
+        ok_alu: true,
+        ok_defl: true,
+        ok_frame: true,
+        time: new Date().toLocaleTimeString('fr-FR'),
+        isAi: true
+      };
+    });
+
+    setPendingExtractions(prev => [...newElements, ...prev]);
+    setExtractionCandidates([]);
+    showToast(`${newElements.length} éléments de ${candidate.modelName} ajoutés pour validation`, "success");
   };
 
   const clearAllExtractions = () => {
@@ -944,10 +1033,33 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
             >
               <option value="google">GEMINI (Native)</option>
               <option value="groq">GROQ (Llama-3)</option>
-              <option value="openrouter">OpenRouter (Multiple)</option>
+              <option value="openrouter">OpenRouter (Assistant)</option>
               <option value="huggingface">Hugging Face</option>
             </select>
           </div>
+          
+          {aiProvider === 'openrouter' && (
+            <div className="mb-3">
+              <div className="text-[9px] font-bold text-white/30 uppercase tracking-[0.2em] mb-1.5">Choisir un modèle (Top 10)</div>
+              <div className="space-y-0.5 max-h-[140px] overflow-y-auto pr-1 custom-scrollbar">
+                {OPENROUTER_VISION_MODELS.map(m => (
+                  <button 
+                    key={m.id}
+                    onClick={() => setSelectedOrModel(m.id)}
+                    className={`w-full text-left px-2 py-1.5 rounded-md text-[10px] font-bold transition-all flex items-center justify-between group
+                    ${selectedOrModel === m.id ? 'bg-ai-accent text-white shadow-lg' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
+                  >
+                    <span className="truncate flex items-center gap-2">
+                       <span className="opacity-80 group-hover:scale-125 transition-transform">{m.icon}</span> 
+                       {m.name}
+                    </span>
+                    {selectedOrModel === m.id && <Check size={10} />}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <p className="text-[11px] text-white/70 leading-relaxed">
             Analyse vos plans PDF/IMG. Configurez vos clés API pour utiliser Gemini ou Groq.
           </p>
@@ -995,17 +1107,31 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
           </div>
           <div className="flex items-center gap-3">
             <button 
-              onClick={exportJSON}
-              className="px-4 py-2 bg-white border border-border rounded-full font-bold text-xs hover:bg-bg transition-colors flex items-center gap-2 shadow-sm"
+              onClick={() => document.getElementById('import-project')?.click()}
+              className="px-4 py-2 bg-white border border-border rounded-full font-bold text-[10px] hover:bg-bg transition-colors flex items-center gap-2 shadow-sm uppercase tracking-wider"
             >
-              <FileDown size={14} /> Exporter Rapport
+              <FileUp size={14} className="text-success" /> Importer
             </button>
             <button 
-              onClick={() => showToast("Données stockées localement")}
-              className="px-5 py-2 bg-accent text-white rounded-full font-bold text-xs hover:filter hover:brightness-105 transition-all shadow-lg shadow-accent/20"
+              onClick={exportJSON}
+              className="px-4 py-2 bg-white border border-border rounded-full font-bold text-[10px] hover:bg-bg transition-colors flex items-center gap-2 shadow-sm uppercase tracking-wider"
             >
-              Enregistré (Auto)
+              <FileDown size={14} className="text-accent" /> Exporter
             </button>
+            <div className="h-4 w-[1px] bg-border mx-1" />
+            <button 
+              onClick={() => showToast("Données stockées localement")}
+              className="px-5 py-2 bg-accent text-white rounded-full font-bold text-[10px] hover:filter hover:brightness-105 transition-all shadow-lg shadow-accent/20 uppercase tracking-wider"
+            >
+              Sauvegardé (Auto)
+            </button>
+            <input 
+              id="import-project"
+              type="file" 
+              accept=".json" 
+              className="hidden" 
+              onChange={importJSON} 
+            />
           </div>
         </div>
 
@@ -1409,7 +1535,170 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
           </div>
         )}
 
+        {/* Multi-Candidate Selection UI */}
+        <AnimatePresence>
+          {extractionCandidates.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-6"
+            >
+              <motion.div
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                className="bg-white border border-border w-full max-w-6xl h-full max-h-[85vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden"
+              >
+                <div className="p-8 border-b border-border flex justify-between items-center bg-bg/30">
+                  <div>
+                    <h2 className="text-2xl font-black tracking-tight font-serif italic text-accent flex items-center gap-3">
+                      <Sparkles className="text-ai-accent" /> Comparaison des Modèles IA
+                    </h2>
+                    <p className="text-xs font-bold text-text-muted uppercase tracking-widest mt-1">Plusieurs extractions détectées via OpenRouter. Choisissez la plus précise.</p>
+                  </div>
+                  <button 
+                    onClick={() => setExtractionCandidates([])}
+                    className="w-10 h-10 rounded-full bg-bg hover:bg-border transition-colors flex items-center justify-center"
+                  >
+                    <X />
+                  </button>
+                </div>
+                
+                <div className="flex-1 overflow-x-auto p-8 bg-bg/20">
+                  <div className="flex gap-6 h-full">
+                    {extractionCandidates.map((cand, idx) => (
+                      <motion.div 
+                        key={cand.modelId}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: idx * 0.1 }}
+                        className="w-[320px] shrink-0 bg-white border border-border rounded-2xl flex flex-col shadow-sm hover:shadow-xl hover:border-accent/40 transition-all group"
+                      >
+                        <div className="p-5 border-b border-border bg-bg/10">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] font-black text-ai-accent uppercase tracking-tighter">Modèle {idx + 1}</span>
+                            <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
+                          </div>
+                          <h3 className="font-black text-lg tracking-tight truncate">{cand.modelName}</h3>
+                          <p className="text-[9px] font-mono text-text-muted truncate mt-1">{cand.modelId}</p>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                          <div className="text-[9px] font-bold text-text-muted uppercase tracking-widest mb-2 border-b border-border/50 pb-1">
+                            {cand.elements.length} Éléments Détectés
+                          </div>
+                          {cand.elements.map((el, eIdx) => (
+                            <div key={eIdx} className="bg-bg/40 p-3 rounded-xl border border-border/30">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="font-bold text-[11px] truncate uppercase">{el.name}</span>
+                                <span className="text-[9px] px-1.5 py-0.5 bg-accent/10 text-accent rounded font-black">{el.type}</span>
+                              </div>
+                              <div className="text-[10px] font-mono text-text-muted">Épaisseur: {el.thickness}mm</div>
+                            </div>
+                          ))}
+                        </div>
+                        
+                        <div className="p-5 border-t border-border bg-bg/10 mt-auto">
+                          <button 
+                            onClick={() => applyCandidate(cand)}
+                            className="w-full bg-accent text-white py-3 rounded-xl font-black text-[11px] uppercase tracking-wider hover:filter hover:brightness-110 shadow-lg shadow-accent/20 transition-all flex items-center justify-center gap-2"
+                          >
+                            <CheckCircle2 size={16} /> Sélectionner ce Résultat
+                          </button>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div className="p-6 border-t border-border text-center bg-white">
+                  <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest italic animate-pulse">
+                    Astuce : Vérifiez la précision des noms (D1, P2) et des épaisseurs avant de confirmer.
+                  </p>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* OpenRouter Model Configuration Modal */}
+        <AnimatePresence>
+          {showOrConfig && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-surface border border-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+              >
+                <div className="p-6 border-b border-border bg-bg/30 flex justify-between items-center">
+                  <div>
+                    <h3 className="text-lg font-black tracking-tight uppercase">Configuration OpenRouter</h3>
+                    <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest">Sélectionnez les modèles à utiliser (Max 10)</p>
+                  </div>
+                  <button onClick={() => setShowOrConfig(false)} className="w-8 h-8 rounded-full bg-bg hover:bg-border transition-colors flex items-center justify-center">
+                    <X size={16} />
+                  </button>
+                </div>
+                
+                <div className="p-4 space-y-2 max-h-[400px] overflow-y-auto">
+                  {OPENROUTER_VISION_MODELS.map(model => (
+                    <label 
+                      key={model.id}
+                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all
+                      ${selectedOrModels.includes(model.id) ? 'bg-accent/5 border-accent/30 shadow-inner' : 'bg-bg/50 border-border/30 hover:border-border'}`}
+                    >
+                      <input 
+                        type="checkbox"
+                        className="hidden"
+                        checked={selectedOrModels.includes(model.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedOrModels(prev => [...prev, model.id]);
+                          } else {
+                            setSelectedOrModels(prev => prev.filter(id => id !== model.id));
+                          }
+                        }}
+                      />
+                      <span className="text-xl">{model.icon}</span>
+                      <div className="flex-1">
+                        <div className="text-[12px] font-black tracking-tight">{model.name}</div>
+                        <div className="text-[9px] font-mono text-text-muted truncate">{model.id}</div>
+                      </div>
+                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all
+                      ${selectedOrModels.includes(model.id) ? 'bg-accent border-accent text-white' : 'border-border'}`}>
+                        {selectedOrModels.includes(model.id) && <Check size={12} />}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+                
+                <div className="p-4 bg-bg/50 flex gap-3">
+                  <button 
+                    onClick={() => {
+                      if (selectedOrModels.length === 0) {
+                        showToast("Veuillez sélectionner au moins un modèle", "error");
+                        return;
+                      }
+                      setShowOrConfig(false);
+                    }}
+                    className="flex-1 py-3 rounded-xl bg-accent text-white font-black text-xs uppercase tracking-widest hover:filter hover:brightness-110 transition-all shadow-lg shadow-accent/20"
+                  >
+                    Enregistrer la Sélection ({selectedOrModels.length})
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
       </main>
+
     </div>
   );
 }
