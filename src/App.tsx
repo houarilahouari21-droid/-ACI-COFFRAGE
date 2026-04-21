@@ -663,7 +663,10 @@ export default function App() {
       const base64 = await base64Promise;
 
       let extracted: any[] = [];
-      const isStaticEnv = window.location.hostname.includes('github.io') || window.location.hostname.includes('localhost') === false && !window.location.port;
+      const isStaticEnv = window.location.hostname.includes('github.io') || 
+                         (window.location.hostname.includes('localhost') === false && 
+                          !window.location.port && 
+                          !window.location.hostname.includes('run.app'));
       const viteKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
 
       // FORCE LOCAL MODE ON STATIC HOSTS FOR GOOGLE
