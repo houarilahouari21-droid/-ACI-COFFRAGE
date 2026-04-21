@@ -40,9 +40,35 @@ import {
   TrendingUp,
   CheckCircle2,
   LayoutGrid,
-  BarChart3
+  BarChart3,
+  LogIn,
+  LogOut,
+  User as UserIcon
 } from 'lucide-react';
 import { GoogleGenAI, Type } from "@google/genai";
+import { 
+  auth, 
+  db, 
+  signInWithGoogle, 
+  logout, 
+  handleFirestoreError 
+} from './lib/firebase';
+import { 
+  onAuthStateChanged, 
+  User as FirebaseUser 
+} from 'firebase/auth';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  doc, 
+  setDoc, 
+  deleteDoc, 
+  getDocs,
+  writeBatch,
+  Timestamp
+} from 'firebase/firestore';
 import { 
   BarChart, 
   Bar, 
@@ -159,6 +185,8 @@ const OPENROUTER_VISION_MODELS = [
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'dalle' | 'poutre'>('dashboard');
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isFirebaseLoading, setIsFirebaseLoading] = useState(true);
   
   const [allProjects, setAllProjects] = useState<ProjectData[]>(() => {
     const saved = localStorage.getItem('coffrageProjects');
@@ -190,28 +218,107 @@ export default function App() {
     setAllProjects(prev => prev.map(p => {
       if (p.id === currentProjectId) {
         const updated = typeof value === 'function' ? (value as any)(p) : value;
-        return { 
+        const finalProject = { 
           ...p,
           ...updated, 
-          id: p.id, // Garder l'ID du slot actuel
+          id: p.id,
           updatedAt: new Date().toISOString() 
         };
+
+        // Sync with Firestore if logged in
+        if (user) {
+          setDoc(doc(db, 'projects', p.id), {
+            ...finalProject,
+            userId: user.uid,
+            updatedAt: Timestamp.now()
+          }).catch(e => console.error("Firestore Update Error:", e));
+        }
+
+        return finalProject;
       }
       return p;
     }));
-  }, [currentProjectId]);
+  }, [currentProjectId, user]);
 
   useEffect(() => {
     localStorage.setItem('coffrageProjects', JSON.stringify(allProjects));
   }, [allProjects]);
 
+  // --- Firebase Auth & Sync ---
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      setUser(u);
+      if (u) {
+        // Sync local projects to Firestore on first login? 
+        // For simplicity, we just fetch user's projects
+        const q = query(collection(db, 'projects'), where('userId', '==', u.uid));
+        const unsubFirestore = onSnapshot(q, (snapshot) => {
+          const firestoreProjects: ProjectData[] = snapshot.docs.map(d => {
+            const data = d.data();
+            return {
+              ...data,
+              id: d.id,
+              updatedAt: data.updatedAt?.toDate?.()?.toISOString() || new Date().toISOString()
+            } as ProjectData;
+          });
+
+          if (firestoreProjects.length > 0) {
+            setAllProjects(prev => {
+              // Merge: keep local projects that are not in Firestore yet, but prefer Firestore
+              const localOnly = prev.filter(lp => !firestoreProjects.find(fp => fp.id === lp.id));
+              return [...firestoreProjects, ...localOnly];
+            });
+          }
+          setIsFirebaseLoading(false);
+        }, (err) => {
+          console.error("Firestore Listen Error:", err);
+          setIsFirebaseLoading(false);
+        });
+        return () => unsubFirestore();
+      } else {
+        setIsFirebaseLoading(false);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const loginWithGoogle = async () => {
+    try {
+      await signInWithGoogle();
+      showToast("Connecté avec succès", "success");
+    } catch (e) {
+      showToast("Échec de connexion", "error");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      showToast("Déconnecté", "info");
+      // Optionally clear all projects or just let it be?
+      // For now, keep them in local storage
+    } catch (e) {
+      showToast("Erreur lors de la déconnexion", "error");
+    }
+  };
+
   const createNewProject = () => {
+    const newId = 'PRJ-' + Math.random().toString(36).substr(2, 6).toUpperCase();
     const newProj: ProjectData = {
-      id: 'PRJ-' + Math.random().toString(36).substr(2, 6).toUpperCase(),
+      id: newId,
       name: "Nouveau Projet " + (allProjects.length + 1),
       elements: [],
       updatedAt: new Date().toISOString()
     };
+
+    if (user) {
+      setDoc(doc(db, 'projects', newId), {
+        ...newProj,
+        userId: user.uid,
+        updatedAt: Timestamp.now()
+      }).catch(e => showToast("Erreur Firestore", "error"));
+    }
+
     setAllProjects(prev => [newProj, ...prev]);
     setCurrentProjectId(newProj.id);
     setActiveTab('dashboard');
@@ -263,6 +370,11 @@ export default function App() {
       "Voulez-vous vraiment supprimer ce projet ? Cette action est irréversible.",
       () => {
         const remaining = allProjects.filter(p => p.id !== id);
+        
+        if (user) {
+          deleteDoc(doc(db, 'projects', id)).catch(e => console.error(e));
+        }
+
         setAllProjects(remaining);
         if (currentProjectId === id) {
           setCurrentProjectId(remaining[0].id);
@@ -975,7 +1087,12 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
               </button>
               
               <div className="mt-4 space-y-1 max-h-[200px] overflow-y-auto pr-1">
-                {allProjects.map(proj => (
+                {isFirebaseLoading ? (
+                  <div className="flex flex-col items-center justify-center p-8 gap-3 opacity-40">
+                    <Loader2 size={24} className="animate-spin text-accent" />
+                    <div className="text-[10px] font-bold tracking-widest uppercase">Chargement Cloud...</div>
+                  </div>
+                ) : allProjects.map(proj => (
                   <div key={proj.id} className="group flex items-center gap-1">
                     <button 
                       onClick={() => {
@@ -1064,6 +1181,41 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
             Analyse vos plans PDF/IMG. Configurez vos clés API pour utiliser Gemini ou Groq.
           </p>
           <div className="mt-3 text-[10px] font-mono opacity-50">Status: {isAiLoading ? 'Analyse...' : 'Prêt à analyser'}</div>
+        </div>
+
+        {/* Firebase Account Panel */}
+        <div className="mt-4 pt-4 border-t border-white/5">
+          {user ? (
+            <div className="flex items-center justify-between p-2 rounded-xl bg-white/5 border border-white/10 group">
+              <div className="flex items-center gap-3 overflow-hidden">
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt={user.displayName || ''} className="w-8 h-8 rounded-lg shrink-0 border border-white/10" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="w-8 h-8 rounded-lg bg-accent/20 flex items-center justify-center shrink-0">
+                    <UserIcon size={16} className="text-accent" />
+                  </div>
+                )}
+                <div className="truncate">
+                  <div className="text-[11px] font-bold text-white truncate">{user.displayName || 'Ingénieur'}</div>
+                  <div className="text-[9px] text-white/40 truncate">Cloud Sync: OK</div>
+                </div>
+              </div>
+              <button 
+                onClick={handleLogout}
+                className="p-1.5 opacity-0 group-hover:opacity-100 text-white/40 hover:text-danger hover:bg-danger/10 rounded-lg transition-all"
+                title="Déconnexion"
+              >
+                <LogOut size={14} />
+              </button>
+            </div>
+          ) : (
+            <button 
+              onClick={loginWithGoogle}
+              className="w-full flex items-center justify-center gap-3 p-3 rounded-xl bg-ai-accent text-white font-bold text-[11px] uppercase tracking-widest hover:bg-black transition-all shadow-lg shadow-ai-accent/20"
+            >
+              <LogIn size={14} /> Connexion Cloud
+            </button>
+          )}
         </div>
       </aside>
 

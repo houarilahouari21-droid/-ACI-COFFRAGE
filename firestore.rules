@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 3. Path Variable Hardening helper
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 2. Validation Blueprints
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'createdAt']) 
+        && data.email is string && data.email.size() <= 256
+        && data.createdAt is timestamp;
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['name', 'userId', 'updatedAt'])
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.userId == request.auth.uid
+        && data.updatedAt == request.time
+        && (!data.keys().contains('elements') || (data.elements is list && data.elements.size() <= 500));
+    }
+
+    // 6. PII Isolation & Schema Constraints
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().createdAt == request.time;
+      allow update: if isOwner(userId) && isValidUser(incoming()) 
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'email']);
+    }
+
+    match /projects/{projectId} {
+      // 8. Secure List Queries
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow get: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      allow create: if isSignedIn() && isValidProject(incoming()) && isValidId(projectId);
+      
+      allow update: if isOwner(existing().userId) && isValidProject(incoming())
+        && incoming().userId == existing().userId // Identity Integrity
+        && (
+          // Action: Rename or Update Elements
+          incoming().diff(existing()).affectedKeys().hasAll(['name', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasAll(['elements', 'updatedAt'])
+        );
+        
+      allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+    }
+  }
+}
