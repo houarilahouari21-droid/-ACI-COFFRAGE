@@ -670,7 +670,7 @@ export default function App() {
       if (aiProvider === 'google') {
         if (localGeminiKey || viteKey) {
           const key = localGeminiKey || viteKey;
-          const genAI = new GoogleGenAI(key);
+          const genAI = new GoogleGenAI({ apiKey: key });
           
           const response = await genAI.models.generateContent({
             model: "gemini-3-flash-preview",
@@ -1475,7 +1475,7 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                      <h3 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-6 flex items-center gap-2"><BarChart3 size={14}/> Graphique de Charges</h3>
                      <div className="h-[200px]">
                         <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                           <BarChart data={statsData}>
+                           <BarChart data={statsData} margin={{ left: -30, right: 10 }}>
                               <XAxis dataKey="name" hide />
                               <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px rgba(0,0,0,0.1)' }} />
                               <Bar dataKey="charge" radius={[4, 4, 0, 0]}>
