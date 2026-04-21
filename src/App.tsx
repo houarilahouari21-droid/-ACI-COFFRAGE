@@ -682,7 +682,7 @@ export default function App() {
         
         try {
           const response = await genAI.models.generateContent({
-            model: "gemini-1.5-flash",
+            model: "gemini-1.5-flash-latest",
             contents: [{
               parts: [
                 { text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
@@ -1487,8 +1487,8 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                <div className="flex flex-col gap-6">
                   <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm border-t-4 border-t-accent">
                      <h3 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-6 flex items-center gap-2"><BarChart3 size={14}/> Graphique de Charges</h3>
-                     <div className="h-[200px]">
-                        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                     <div className="h-[200px] w-full min-w-0">
+                        <ResponsiveContainer width="99%" height="100%" minWidth={0}>
                            <BarChart data={statsData} margin={{ left: -30, right: 10 }}>
                               <XAxis dataKey="name" hide />
                               <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px rgba(0,0,0,0.1)' }} />
