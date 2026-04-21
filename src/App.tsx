@@ -667,16 +667,22 @@ export default function App() {
                          (window.location.hostname.includes('localhost') === false && 
                           !window.location.port && 
                           !window.location.hostname.includes('run.app'));
+      
       const viteKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
 
-      // FORCE LOCAL MODE ON STATIC HOSTS FOR GOOGLE
-      if (aiProvider === 'google') {
-        if (localGeminiKey || viteKey) {
-          const key = localGeminiKey || viteKey;
-          const genAI = new GoogleGenAI({ apiKey: key });
-          
+      // FONCTION DE SECOURS POUR GITHUB (MODE CLIENT)
+      if (isStaticEnv && (aiProvider === 'google' || localGeminiKey)) {
+        const key = localGeminiKey || viteKey;
+        if (!key) {
+          setShowKeyInput(true);
+          throw new Error("Mode statique (GitHub) : Une clé API Gemini locale est requise pour l'analyse. Cliquez sur l'icône de réglage pour la configurer.");
+        }
+
+        const genAI = new GoogleGenAI({ apiKey: key });
+        
+        try {
           const response = await genAI.models.generateContent({
-            model: "gemini-3-flash-preview",
+            model: "gemini-1.5-flash",
             contents: [{
               parts: [
                 { text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
@@ -687,63 +693,68 @@ export default function App() {
             config: { responseMimeType: "application/json" }
           });
 
-          const text = response.text;
+          // Extraction du texte avec gestion de la version du SDK
+          let text = "";
+          if (typeof response.text === 'function') {
+            text = (response as any).text();
+          } else if (typeof response.text === 'string') {
+            text = response.text;
+          } else if ((response as any).response?.text) {
+             text = (response as any).response.text();
+          }
+
+          if (!text) throw new Error("Réponse vide de l'IA. Vérifiez votre clé.");
+          
           const jsonMatch = text.match(/\{[\s\S]*\}/);
           const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
           extracted = parsed.elements || [];
-        } else if (isStaticEnv) {
-          setShowKeyInput(true);
-          throw new Error("Mode statique détecté (GitHub). Vous DEVEZ entrer une clé API Gemini locale (icône engrenage) car le serveur n'est pas disponible ici.");
-        } else {
-          // Fallback to server if not on static env and no local key
+        } catch (apiErr: any) {
+          if (apiErr.message?.includes("fetch")) {
+            throw new Error("Erreur de connexion à l'API Google. Vérifiez votre clé ou votre connexion internet.");
+          }
+          throw apiErr;
+        }
+      } else {
+        // MODE NORMAL (Serveur Cloud Run)
+        try {
           const res = await fetch("/api/ai-extract", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ base64, mimeType: file.type, provider: aiProvider })
+            body: JSON.stringify({
+              base64,
+              mimeType: file.type,
+              provider: aiProvider,
+              models: aiProvider === 'openrouter' ? [selectedOrModel] : undefined
+            })
           });
-          if (!res.ok) throw new Error("Erreur serveur extraction");
+
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            
+            if (errData.error?.includes("GEMINI_API_KEY")) {
+              setShowKeyInput(true);
+              throw new Error("Clé API manquante. Veuillez configurer GEMINI_API_KEY.");
+            }
+            throw new Error(errData.error || `Erreur serveur: ${res.status}`);
+          }
+
           const data = await res.json();
-          extracted = data.elements || [];
-        }
-      } else {
-        // Groq / OpenRouter MUST use backend
-        const res = await fetch("/api/ai-extract", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            base64,
-            mimeType: file.type,
-            provider: aiProvider,
-            models: aiProvider === 'openrouter' ? [selectedOrModel] : undefined
-          })
-        });
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
           
-          // Si on est sur GitHub Pages et que ça échoue, c'est probablement car le serveur n'existe pas
-          if (res.status === 404 || errData.error?.includes("failed to fetch")) {
-             setShowKeyInput(true);
-             throw new Error("Le serveur d'analyse est absent sur ce domaine statique. Veuillez configurer votre clé locale pour continuer.");
+          if (aiProvider === 'openrouter' && data.candidates) {
+            setExtractionCandidates(data.candidates);
+            showToast(`Plusieurs modèles ont répondu. Choisissez le meilleur résultat.`, "info");
+            setIsAiLoading(false);
+            return;
           }
 
-          if (errData.error?.includes("GEMINI_API_KEY")) {
+          extracted = data.elements || [];
+        } catch (fetchErr: any) {
+          if (isStaticEnv) {
             setShowKeyInput(true);
-            throw new Error("Clé API Gemini manquante sur le serveur. Configurez GEMINI_API_KEY.");
+            throw new Error("Ce domaine (GitHub) ne supporte pas le serveur d'analyse. Veuillez configurer une clé Gemini locale (via l'icône de réglages) pour utiliser l'IA.");
           }
-          throw new Error(errData.error || `Erreur serveur: ${res.status}`);
+          throw fetchErr;
         }
-
-        const data = await res.json();
-        
-        if (aiProvider === 'openrouter' && data.candidates) {
-          setExtractionCandidates(data.candidates);
-          showToast(`Plusieurs modèles ont répondu. Choisissez le meilleur résultat.`, "info");
-          setIsAiLoading(false);
-          return;
-        }
-
-        extracted = data.elements || [];
       }
 
       if (extracted.length === 0) {
