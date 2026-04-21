@@ -663,31 +663,47 @@ export default function App() {
       const base64 = await base64Promise;
 
       let extracted: any[] = [];
-
-      // MODE SECOURS POUR GITHUB PAGES (Client-side Gemini)
+      const isStaticEnv = window.location.hostname.includes('github.io') || window.location.hostname.includes('localhost') === false && !window.location.port;
       const viteKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
-      if (aiProvider === 'google' && (localGeminiKey || viteKey)) {
-        const key = localGeminiKey || viteKey;
-        const genAI = new GoogleGenAI(key);
-        
-        const response = await genAI.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: [{
-            parts: [
-              { text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
-                Retourne UNIQUEMENT un objet JSON: { "elements": [ { "name": string, "thickness": number, "type": "DALLE"|"POUTRE" } ] }.` },
-              { inlineData: { data: base64, mimeType: file.type || "image/jpeg" } }
-            ]
-          }],
-          config: { responseMimeType: "application/json" }
-        });
 
-        const text = response.text;
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
-        extracted = parsed.elements || [];
+      // FORCE LOCAL MODE ON STATIC HOSTS FOR GOOGLE
+      if (aiProvider === 'google') {
+        if (localGeminiKey || viteKey) {
+          const key = localGeminiKey || viteKey;
+          const genAI = new GoogleGenAI(key);
+          
+          const response = await genAI.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: [{
+              parts: [
+                { text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
+                  Retourne UNIQUEMENT un objet JSON: { "elements": [ { "name": string, "thickness": number, "type": "DALLE"|"POUTRE" } ] }.` },
+                { inlineData: { data: base64, mimeType: file.type || "image/jpeg" } }
+              ]
+            }],
+            config: { responseMimeType: "application/json" }
+          });
+
+          const text = response.text;
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+          extracted = parsed.elements || [];
+        } else if (isStaticEnv) {
+          setShowKeyInput(true);
+          throw new Error("Mode statique détecté (GitHub). Vous DEVEZ entrer une clé API Gemini locale (icône engrenage) car le serveur n'est pas disponible ici.");
+        } else {
+          // Fallback to server if not on static env and no local key
+          const res = await fetch("/api/ai-extract", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ base64, mimeType: file.type, provider: aiProvider })
+          });
+          if (!res.ok) throw new Error("Erreur serveur extraction");
+          const data = await res.json();
+          extracted = data.elements || [];
+        }
       } else {
-        // MODE NORMAL (Backend Proxy)
+        // Groq / OpenRouter MUST use backend
         const res = await fetch("/api/ai-extract", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
