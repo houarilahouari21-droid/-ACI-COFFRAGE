@@ -25,7 +25,20 @@ import {
   Zap,
   ShieldCheck,
   ShieldAlert,
-  Info
+  Info,
+  Maximize,
+  ArrowUpRight,
+  Calculator,
+  Code,
+  Search,
+  SortAsc,
+  Activity,
+  FileJson,
+  RotateCcw,
+  TrendingUp,
+  CheckCircle2,
+  LayoutGrid,
+  BarChart3
 } from 'lucide-react';
 import { GoogleGenAI, Type } from "@google/genai";
 import { 
@@ -73,8 +86,11 @@ const CapacityIndicator = ({ value, label, limit, unit = "PSF" }: { value: numbe
           className={`h-full transition-colors duration-500 ${isOver ? 'bg-danger shadow-[0_0_8px_rgba(239,68,68,0.4)]' : 'bg-accent shadow-[0_0_8px_rgba(37,99,235,0.3)]'}`}
         />
       </div>
-      <div className="text-[8px] font-bold text-right opacity-60">
-        {fmt(ratio, 1)}% UTILISÉ
+      <div className="flex justify-between items-center text-[8px] font-bold">
+        <span className={`${isOver ? 'text-danger animate-pulse' : 'text-success'} uppercase`}>
+           {isOver ? '❗ SURCHARGE' : '✅ OK'}
+        </span>
+        <span className="opacity-60">{fmt(ratio, 1)}% UTILISÉ</span>
       </div>
     </div>
   );
@@ -176,6 +192,36 @@ export default function App() {
     showToast("Nouveau projet créé");
   };
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState<'name' | 'date' | 'factor'>('date');
+  const [showFormulaId, setShowFormulaId] = useState<number | null>(null);
+
+  const filteredElements = useMemo(() => {
+    let filtered = projectData.elements.filter(el => 
+      el.params.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+    if (sortBy === 'name') {
+      filtered = [...filtered].sort((a, b) => a.params.name.localeCompare(b.params.name));
+    } else if (sortBy === 'factor') {
+      // Sort by safest (lower ratio) to most critical
+      const getRatio = (el: any) => el.capAlu > 0 ? (el.loadAlu / el.capAlu) : 2;
+      filtered = [...filtered].sort((a, b) => getRatio(b) - getRatio(a));
+    } else {
+      filtered = [...filtered].sort((a, b) => b.id - a.id);
+    }
+    return filtered;
+  }, [projectData.elements, searchQuery, sortBy]);
+
+  const statsData = useMemo(() => {
+    if (projectData.elements.length === 0) return [];
+    return projectData.elements.slice(0, 8).map(el => ({
+      name: el.params.name,
+      charge: Math.round(el.total),
+      capacity: Math.round(el.capAlu / el.params.trib) // Normalized to psf
+    }));
+  }, [projectData.elements]);
+
   const deleteProject = (id: string) => {
     if (allProjects.length <= 1) {
       showToast("Impossible de supprimer le dernier projet", "error");
@@ -210,7 +256,7 @@ export default function App() {
 
   const [editingId, setEditingId] = useState<number | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
-  const [aiProvider, setAiProvider] = useState<'google' | 'groq'>('google');
+  const [aiProvider, setAiProvider] = useState<'google' | 'groq' | 'openrouter' | 'huggingface'>('google');
   const [pendingExtractions, setPendingExtractions] = useState<any[]>([]);
   
   const aiRef = useRef<GoogleGenAI | null>(null);
@@ -478,7 +524,7 @@ export default function App() {
         
         try {
             const response = await aiRef.current.models.generateContent({
-              model: "gemini-3-flash-preview",
+              model: "gemini-2.0-flash",
               contents: [
                 {
                   parts: [
@@ -693,7 +739,122 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
         )}
       </AnimatePresence>
 
-      {/* Sidebar */}
+      {/* Technical Formulas Modal */}
+      <AnimatePresence>
+        {showFormulaId && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-surface border border-border w-full max-w-2xl rounded-2xl shadow-3xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {(() => {
+                const el = projectData.elements.find(e => e.id === showFormulaId);
+                if (!el) return null;
+                return (
+                  <>
+                    <div className="p-6 border-b border-border bg-bg/20 flex justify-between items-center">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-accent/10 text-accent rounded-xl flex items-center justify-center"><Calculator size={20}/></div>
+                        <div>
+                          <div className="flex items-center gap-3">
+                            <h3 className="font-black uppercase tracking-tighter text-lg leading-tight">Détails Techniques : {el.params.name}</h3>
+                            <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${el.ok_wood && el.ok_alu && el.ok_frame ? 'bg-success text-white' : 'bg-danger text-white'}`}>
+                               {el.ok_wood && el.ok_alu && el.ok_frame ? 'OK' : 'NON CONFORME'}
+                            </div>
+                          </div>
+                          <p className="text-[10px] font-bold text-text-muted tracking-widest uppercase">Transparence des Calculs d'Ingénierie</p>
+                        </div>
+                      </div>
+                      <button onClick={() => setShowFormulaId(null)} className="p-2 hover:bg-bg rounded-lg transition-colors"><X/></button>
+                    </div>
+                    <div className="p-8 overflow-y-auto scroller-hidden bg-white">
+                       <div className="space-y-8">
+                          <section>
+                            <h4 className="text-[11px] font-black text-accent uppercase tracking-widest mb-4 flex items-center gap-2">
+                              <span className="w-4 h-4 rounded bg-accent text-white flex items-center justify-center text-[8px]">1</span> 
+                              Détermination des Charges (ASCE 7)
+                            </h4>
+                            <div className="grid grid-cols-2 gap-6 pl-6 border-l border-accent/20">
+                              <div className="font-mono text-xs space-y-1">
+                                <div className="text-text-muted">Charge Morte (D):</div>
+                                <div className="font-bold text-text-main">({fmt(el.params.isVar ? el.params.epMax : el.params.ep)}mm / 25.4 / 12) * {CONCRETE_PCF} PCF + {fmt(formDead)} PSF = {fmt(el.total - formLive)} PSF</div>
+                              </div>
+                              <div className="font-mono text-xs space-y-1">
+                                <div className="text-text-muted">Charge Totale (D+L):</div>
+                                <div className="font-bold text-text-main">{fmt(el.total - formLive)} + {fmt(formLive)} PSF = {fmt(el.total)} PSF</div>
+                              </div>
+                            </div>
+                          </section>
+
+                          <section>
+                            <h4 className="text-[11px] font-black text-accent uppercase tracking-widest mb-4 flex items-center gap-2">
+                              <span className="w-4 h-4 rounded bg-accent text-white flex items-center justify-center text-[8px]">2</span> 
+                              Limites de Flexion & Cisaillement
+                            </h4>
+                            <div className="space-y-4 pl-6 border-l border-accent/20">
+                              <div className="bg-bg/40 p-4 rounded-xl border border-border/50">
+                                <div className={`text-[10px] font-bold mb-2 uppercase flex items-center justify-between ${el.ok_wood ? 'text-success' : 'text-danger'}`}>
+                                  <span>Contreplaqué 19mm (Grosir 0.167)</span>
+                                  <span>{el.ok_wood ? '✅ CONFORME' : '❌ ÉCHEC'}</span>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                  <div className="text-center">
+                                    <div className="text-[9px] text-text-muted leading-none mb-1 uppercase">Flexion</div>
+                                    <div className="font-mono text-xs font-bold">{fmt(Math.sqrt(10 * PLY.Fb * PLY.KS / ((el.total)/12)), 1)}"</div>
+                                  </div>
+                                  <div className="text-center border-x border-border/50">
+                                    <div className="text-[9px] text-text-muted leading-none mb-1 uppercase">Defl (L/360)</div>
+                                    <div className="font-mono text-xs font-bold">{fmt(Math.pow(145 * PLY.E * PLY.I / (DEFLECTION_LIMIT * ((el.total-formLive)/12)), 1/3), 1)}"</div>
+                                  </div>
+                                  <div className="text-center">
+                                    <div className="text-[9px] text-text-muted leading-none mb-1 uppercase">Rolling Shear</div>
+                                    <div className="font-mono text-xs font-bold">{fmt((5/3) * PLY.Frs * PLY.lbQ / ((el.total)/12), 1)}"</div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </section>
+
+                          <section>
+                            <h4 className="text-[11px] font-black text-accent uppercase tracking-widest mb-4 flex items-center gap-2">
+                              <span className="w-4 h-4 rounded bg-accent text-white flex items-center justify-center text-[8px]">3</span> 
+                              Vérification Aluma-Beam
+                            </h4>
+                            <div className="flex items-center gap-6 pl-6 border-l border-accent/20">
+                               <div className={`flex-1 p-4 rounded-xl border ${el.ok_alu ? 'bg-success/5 border-success/20' : 'bg-danger/5 border-danger/20'}`}>
+                                  <div className={`text-[10px] font-bold uppercase mb-1 ${el.ok_alu ? 'text-success' : 'text-danger'}`}>
+                                    Capacité vs Charge {el.ok_alu ? '✅ OK' : '❌ ÉCHEC'}
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <div className="text-lg font-black">{Math.round(el.total * el.params.trib)} <span className="text-[10px] opacity-40">LBS</span></div>
+                                    <div className="text-xs font-bold opacity-30">vs</div>
+                                    <div className={`text-lg font-black ${el.ok_alu ? 'text-success' : 'text-danger'}`}>
+                                      {Math.round(el.capAlu)} <span className={`text-[10px] opacity-40 ${el.ok_alu ? 'text-success/60' : 'text-danger/60'}`}>LBS</span>
+                                    </div>
+                                  </div>
+                               </div>
+                            </div>
+                          </section>
+                       </div>
+                    </div>
+                    <div className="p-4 bg-bg/50 border-t border-border flex justify-end">
+                       <button 
+                        onClick={() => setShowFormulaId(null)}
+                        className="px-6 py-2 bg-text-main text-white rounded-xl font-bold text-xs hover:bg-black transition-all"
+                       >
+                         Compris
+                       </button>
+                    </div>
+                  </>
+                );
+              })()}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <aside className="w-[260px] bg-sidebar text-white flex flex-col p-5 shrink-0">
         <div className="flex items-center gap-3 mb-8">
           <div className="w-9 h-9 bg-accent rounded-lg flex items-center justify-center font-black text-lg">🏗️</div>
@@ -781,8 +942,10 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
               onChange={(e) => setAiProvider(e.target.value as any)}
               className="bg-sidebar border border-white/10 rounded px-1 py-0.5 text-[9px] outline-none"
             >
-              <option value="google">GEMINI (Google)</option>
+              <option value="google">GEMINI (Native)</option>
               <option value="groq">GROQ (Llama-3)</option>
+              <option value="openrouter">OpenRouter (Multiple)</option>
+              <option value="huggingface">Hugging Face</option>
             </select>
           </div>
           <p className="text-[11px] text-white/70 leading-relaxed">
@@ -847,201 +1010,193 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
         </div>
 
         {activeTab === 'dashboard' ? (
-          <div className="flex-1 flex flex-col gap-5 overflow-hidden">
-             <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5 flex-1 overflow-hidden">
-                <div className="flex flex-col gap-5 overflow-hidden">
-                   <div className="bg-surface border border-border rounded-[10px] p-6 shadow-sm overflow-hidden flex flex-col shrink-0">
-                      <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-sm font-bold text-text-muted uppercase tracking-wider font-serif italic">Missions de Calcul en Cours</h2>
-                        <div className="flex gap-4">
-                           <button onClick={clearProject} className="text-danger hover:underline text-[11px] font-bold flex items-center gap-1">
-                              <Trash size={12} /> Réinitialiser
-                           </button>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-4 gap-6">
-                        <div className="bg-bg/50 p-4 rounded-xl border border-border/50 text-center">
-                          <div className="text-3xl font-black text-accent mb-1">{projectData.elements.length}</div>
-                          <div className="text-[10px] font-bold text-text-muted uppercase">Éléments Total</div>
-                        </div>
-                        <div className="bg-bg/50 p-4 rounded-xl border border-border/50 text-center">
-                          <div className="text-3xl font-black text-ai-accent mb-1">{projectData.elements.filter(e => e.isAi).length}</div>
-                          <div className="text-[10px] font-bold text-text-muted uppercase">Extraits par IA</div>
-                        </div>
-                        <div className="bg-bg/50 p-4 rounded-xl border border-border/50 text-center relative overflow-hidden">
-                          <div className="text-3xl font-black text-orange-500 mb-1">{pendingExtractions.length}</div>
-                          <div className="text-[10px] font-bold text-text-muted uppercase">En attente</div>
-                          {pendingExtractions.length > 0 && <div className="absolute top-2 right-2 w-2 h-2 bg-orange-500 rounded-full animate-pulse" />}
-                        </div>
-                        <div className="bg-bg/50 p-4 rounded-xl border border-border/50 text-center">
-                          <div className="text-3xl font-black text-success mb-1">{projectData.elements.filter(e => e.ok_wood && e.ok_alu).length}</div>
-                          <div className="text-[10px] font-bold text-text-muted uppercase">Validés</div>
-                        </div>
-                      </div>
+          <div className="flex-1 flex flex-col gap-6 overflow-hidden">
+            {/* Bento Grid Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 shrink-0">
+               <motion.div 
+                 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                 className="bg-surface border border-border p-5 rounded-2xl shadow-sm flex items-center gap-4 border-b-4 border-b-accent"
+               >
+                 <div className="w-12 h-12 bg-accent/10 rounded-xl flex items-center justify-center text-accent shrink-0"><Building2 size={24} /></div>
+                 <div>
+                   <div className="text-[10px] font-black text-text-muted uppercase tracking-widest">Éléments</div>
+                   <div className="text-2xl font-black">{projectData.elements.length}</div>
+                 </div>
+               </motion.div>
+               <motion.div 
+                 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
+                 className="bg-surface border border-border p-5 rounded-2xl shadow-sm flex items-center gap-4 border-b-4 border-b-ai-accent"
+               >
+                 <div className="w-12 h-12 bg-ai-accent/10 rounded-xl flex items-center justify-center text-ai-accent shrink-0"><Zap size={24} /></div>
+                 <div>
+                   <div className="text-[10px] font-black text-text-muted uppercase tracking-widest">IA Analyse</div>
+                   <div className="text-2xl font-black">{projectData.elements.filter(e => e.isAi).length}</div>
+                 </div>
+               </motion.div>
+               <motion.div 
+                 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+                 className="bg-surface border border-border p-5 rounded-2xl shadow-sm flex items-center gap-4 border-b-4 border-b-success"
+               >
+                 <div className="w-12 h-12 bg-success/10 rounded-xl flex items-center justify-center text-success shrink-0"><ShieldCheck size={24} /></div>
+                 <div>
+                   <div className="text-[10px] font-black text-text-muted uppercase tracking-widest">Sécurisé</div>
+                   <div className="text-2xl font-black text-success">
+                     {projectData.elements.filter(e => e.ok_wood && e.ok_alu && e.ok_frame).length}
                    </div>
+                 </div>
+               </motion.div>
+               <motion.div 
+                 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
+                 className="bg-surface border border-border p-5 rounded-2xl shadow-sm flex items-center gap-4 border-b-4 border-b-danger"
+               >
+                 <div className="w-12 h-12 bg-danger/10 rounded-xl flex items-center justify-center text-danger shrink-0"><AlertTriangle size={24} /></div>
+                 <div>
+                   <div className="text-[10px] font-black text-text-muted uppercase tracking-widest">Critique</div>
+                   <div className="text-2xl font-black text-danger">
+                     {projectData.elements.filter(e => !e.ok_wood || !e.ok_alu || !e.ok_frame).length}
+                   </div>
+                 </div>
+               </motion.div>
+            </div>
 
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5 flex-1 overflow-hidden">
-                      <div className="bg-surface border border-border rounded-[10px] shadow-sm flex flex-col overflow-hidden">
-                        <div className="px-5 py-4 border-b border-border flex justify-between items-center shrink-0">
-                           <span className="text-[12px] font-bold uppercase tracking-widest text-text-muted font-serif italic">📋 Validation IA ({pendingExtractions.length})</span>
-                           {pendingExtractions.length > 0 && (
-                              <button 
-                                onClick={clearAllExtractions}
-                                className="text-[10px] font-bold text-danger hover:underline uppercase tracking-tighter"
-                              >
-                                Tout rejeter
-                              </button>
-                           )}
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 flex-1 overflow-hidden">
+               {/* Elements List */}
+               <div className="bg-surface border border-border rounded-3xl shadow-sm overflow-hidden flex flex-col min-h-0">
+                  <div className="p-6 border-b border-border flex justify-between items-center bg-bg/5">
+                     <div className="flex items-center gap-6 flex-1">
+                        <h2 className="text-xs font-black text-text-main uppercase tracking-[0.2em] flex items-center gap-2">
+                          <LayoutDashboard size={14} className="text-accent"/> Inventaire
+                        </h2>
+                        <div className="relative flex-1 max-w-sm">
+                           <input 
+                             type="text"
+                             placeholder="Filtrer les éléments..."
+                             value={searchQuery}
+                             onChange={(e) => setSearchQuery(e.target.value)}
+                             className="w-full pl-10 pr-4 py-2.5 bg-white border border-border rounded-xl text-xs outline-none focus:ring-2 focus:ring-accent/20 transition-all shadow-inner"
+                           />
+                           <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-muted" />
                         </div>
-                        <div className="flex-1 overflow-y-auto p-4 scroller-hidden space-y-3 bg-ai-accent/5">
-                           {pendingExtractions.length === 0 ? (
-                              <div className="text-center py-10 opacity-30">
-                                 <Plus className="mx-auto mb-2 text-ai-accent" size={24} />
-                                 <p className="text-xs font-bold italic">Importez un plan pour voir les détections</p>
-                              </div>
-                           ) : (
-                              pendingExtractions.map(el => (
-                                 <div key={el.id} className="bg-white border border-ai-accent/20 rounded-lg p-3 shadow-sm flex flex-col gap-2">
-                                    <div className="flex justify-between items-center text-ai-accent">
-                                       <span className="font-bold text-[13px]">{el.params.name}</span>
-                                       <span className="bg-ai-accent/10 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter">Détection IA</span>
+                     </div>
+                     <div className="flex items-center gap-4">
+                        <select 
+                          value={sortBy}
+                          onChange={(e) => setSortBy(e.target.value as any)}
+                          className="bg-white border border-border rounded-lg px-3 py-2 text-[11px] font-bold outline-none cursor-pointer"
+                        >
+                           <option value="date">Plus récents</option>
+                           <option value="name">A-Z</option>
+                           <option value="factor">Gravité</option>
+                        </select>
+                        <button onClick={clearProject} className="p-2.5 text-danger hover:bg-danger/10 rounded-xl transition-all" title="Reset">
+                           <Trash2 size={18} />
+                        </button>
+                     </div>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto scroller-hidden p-6 space-y-4">
+                     {projectData.elements.length === 0 && pendingExtractions.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center opacity-30 p-12">
+                           <Box size={48} strokeWidth={1} className="mb-4" />
+                           <p className="font-serif italic text-lg mb-1">Dossier vide</p>
+                           <p className="text-[10px] uppercase font-bold tracking-widest">Analysez un plan pour commencer</p>
+                        </div>
+                     ) : (
+                        <>
+                           {pendingExtractions.map(el => (
+                              <motion.div key={el.id} initial={{ scale: 0.98, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-ai-accent/5 border border-ai-accent/20 rounded-2xl p-5 flex flex-col md:flex-row items-center gap-4">
+                                 <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                       <span className="font-black text-sm text-ai-accent uppercase">{el.params.name}</span>
+                                       <span className="bg-ai-accent text-white text-[8px] font-black px-1.5 py-0.5 rounded">DETECTED</span>
                                     </div>
-                                    <div className="flex gap-4 text-[10px] uppercase font-bold text-text-muted">
-                                       <span>Type: {el.params.type}</span>
-                                       <span>Ép: {el.params.epMax}mm</span>
-                                    </div>
-                                    <div className="flex gap-2 mt-1">
-                                       <button 
-                                          onClick={() => approveExtraction(el.id)}
-                                          className="flex-1 bg-success text-white py-1.5 rounded font-bold text-[11px] hover:filter hover:brightness-105 transition-all flex items-center justify-center gap-1"
-                                       >
-                                          <Check size={12} /> Valider
-                                       </button>
-                                       <button 
-                                          onClick={() => rejectExtraction(el.id)}
-                                          className="px-2 py-1.5 border border-danger text-danger rounded font-bold text-[11px] hover:bg-danger-bg transition-all"
-                                       >
-                                          <X size={12} />
-                                       </button>
-                                    </div>
+                                    <div className="text-[10px] font-bold text-text-muted uppercase">{el.params.type} • Épaisseur {el.params.epMax}mm</div>
                                  </div>
-                              ))
-                           )}
-                        </div>
-                      </div>
-
-                      <div className="bg-surface border border-border rounded-[10px] shadow-sm flex flex-col overflow-hidden">
-                          <div className="px-5 py-4 border-b border-border flex justify-between items-center shrink-0">
-                            <span className="text-[12px] font-bold uppercase tracking-widest text-accent font-serif italic">Inventaire des Éléments ({projectData.elements.length})</span>
-                          </div>
-                          <div className="flex-1 overflow-y-auto p-4 scroller-hidden">
-                            {projectData.elements.length === 0 ? (
-                              <div className="h-full flex flex-col items-center justify-center opacity-40 text-center p-10">
-                                <Box size={40} strokeWidth={1} className="mb-3" />
-                                <p className="text-sm font-bold">Aucun élément</p>
-                              </div>
-                            ) : (
-                              <div className="space-y-3">
-                                {projectData.elements.map(el => (
-                                  <div 
-                                    key={el.id} 
-                                    onClick={() => startEdit(el.id)}
-                                    className="bg-bg/5 hover:bg-white border-2 border-transparent hover:border-accent/40 rounded-xl p-4 transition-all cursor-pointer flex items-center justify-between group shadow-sm hover:shadow-lg"
-                                  >
-                                    <div className="flex items-center gap-4">
-                                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold shadow-sm ${el.params.type==='DALLE'?'bg-yellow/10 text-yellow':'bg-blue/10 text-blue'}`}>
-                                          {el.params.type === 'DALLE' ? '▣' : '▬'}
-                                       </div>
-                                       <div>
-                                          <div className="flex items-center gap-2">
-                                            <span className="font-black text-[15px] tracking-tight">{el.params.name}</span>
-                                            {el.isAi && <span className="bg-ai-accent/10 text-ai-accent text-[7px] font-black px-1 py-0.5 rounded uppercase">IA</span>}
-                                          </div>
-                                          <div className="text-[10px] font-bold text-text-muted uppercase tracking-widest flex items-center gap-3 mt-0.5">
-                                             <span>{el.params.epMax}mm • {el.params.type}</span>
-                                             <span className="text-accent font-black">{el.total} PSF</span>
-                                          </div>
-                                       </div>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                       <div className="bg-accent text-white px-2 py-1 rounded text-[9px] font-black uppercase opacity-0 group-hover:opacity-100 transition-opacity">Modifier</div>
-                                       <button 
-                                          onClick={(e) => { e.stopPropagation(); deleteElement(el.id); }} 
-                                          className="p-2 text-text-muted hover:text-danger hover:bg-danger-bg rounded-lg transition-colors"
-                                       >
-                                          <Trash2 size={16} />
-                                       </button>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                      </div>
-                   </div>
-                </div>
-
-                <div className="flex flex-col gap-5 overflow-hidden">
-                   <div className="flex flex-col gap-2 shrink-0">
-                      <div className="flex justify-between items-center mb-1">
-                        <h3 className="text-[11px] font-bold text-text-muted uppercase tracking-[0.1em] font-serif italic">Scanneur de Plan IA</h3>
-                        <div className="flex items-center gap-2">
-                           <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest">Moteur :</span>
-                           <select 
-                             value={aiProvider} 
-                             onChange={(e) => setAiProvider(e.target.value as any)}
-                             className="bg-surface border border-border rounded px-1.5 py-0.5 text-[9px] font-bold text-accent outline-none"
-                           >
-                             <option value="google">Google Gemini</option>
-                             <option value="groq">Groq Llama-3</option>
-                           </select>
-                        </div>
-                      </div>
-                      <div className="bg-[#fdfaff] border-2 border-dashed border-ai-accent rounded-xl p-8 text-center flex flex-col items-center justify-center gap-4 relative">
-                        {isAiLoading && <div className="absolute inset-0 bg-white/60 flex items-center justify-center z-10 rounded-xl"><Loader2 className="animate-spin text-ai-accent" size={32} /></div>}
-                        <div className="text-3xl">📄</div>
-                        <div>
-                          <div className="text-[13px] font-extrabold text-ai-accent mb-1">Glissez vos plans PDF ici</div>
-                          <p className="text-[10px] text-text-muted leading-relaxed max-w-[200px]">Notre IA détectera les cotes, épaisseurs et noms automatiquement.</p>
-                        </div>
-                        <label className="bg-ai-accent text-white px-5 py-2 rounded-full font-bold text-[12px] hover:filter hover:brightness-105 cursor-pointer transition-all shadow-md">
-                          Analyser Image
-                          <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if(f) handleAiExtraction(f);
-                          }} />
-                        </label>
-                      </div>
-                   </div>
-
-                   <div className="bg-surface border border-border rounded-[10px] shadow-sm flex flex-col flex-1 overflow-hidden">
-                      <div className="p-4 border-b border-border font-bold text-[12px] flex justify-between shrink-0">
-                         <span>HISTORIQUE D'EXTRACTION</span>
-                         <span className="text-ai-accent">Auto-sync</span>
-                      </div>
-                      <div className="flex-1 overflow-y-auto p-4 scroller-hidden">
-                         <div className="space-y-4">
-                            {projectData.elements.filter(e => e.isAi).length === 0 ? (
-                              <div className="text-center py-10 opacity-30">
-                                 <Sparkles className="mx-auto mb-2" size={24} />
-                                 <p className="text-xs font-bold">Aucune extraction IA</p>
-                              </div>
-                            ) : (
-                              projectData.elements.filter(e => e.isAi).map(el => (
-                                <div key={el.id} className="flex justify-between items-start border-b border-bg pb-3 last:border-0">
-                                   <div>
-                                      <div className="font-bold text-[12px] mb-0.5">{el.params.name} <span className="bg-ai-accent/10 text-ai-accent text-[8px] font-black px-1 py-0.5 rounded uppercase">IA</span></div>
-                                      <div className="text-[10px] text-text-muted">Épaisseur: {el.params.epMax}mm • {el.time}</div>
-                                   </div>
-                                   <span className="bg-success-bg text-success text-[9px] font-black px-1.5 py-0.5 rounded uppercase font-mono">VALIDE</span>
+                                 <div className="flex gap-2 w-full md:w-auto">
+                                    <button onClick={() => approveExtraction(el.id)} className="flex-1 md:w-32 bg-ai-accent text-white py-2 rounded-xl text-[11px] font-black hover:filter hover:brightness-110 flex items-center justify-center gap-1"><Check size={14}/> Approuver</button>
+                                    <button onClick={() => rejectExtraction(el.id)} className="p-2 border border-ai-accent/20 text-ai-accent rounded-xl hover:bg-ai-accent/10"><X size={18}/></button>
+                                 </div>
+                              </motion.div>
+                           ))}
+                           
+                           {filteredElements.map((el, idx) => (
+                              <motion.div 
+                                key={el.id} 
+                                initial={{ x: -10, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: idx * 0.03 }}
+                                className="group bg-bg/5 border border-border/50 rounded-2xl p-5 hover:border-accent/40 hover:bg-white hover:shadow-xl transition-all flex flex-col xl:flex-row items-center gap-6"
+                              >
+                                <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 shadow-sm
+                                  ${!el.ok_wood || !el.ok_alu || !el.ok_frame ? 'bg-danger text-white' : 'bg-accent text-white text-xl font-bold'}`}>
+                                  {!el.ok_wood || !el.ok_alu || !el.ok_frame ? <AlertTriangle size={24} /> : (el.params.type==='DALLE'?'▣':'▬')}
                                 </div>
-                              ))
-                            )}
-                         </div>
-                      </div>
-                   </div>
-                </div>
-             </div>
+                                <div className="flex-1 min-w-0">
+                                   <div className="flex items-center gap-3 mb-1">
+                                      <h3 className="font-black text-base uppercase tracking-tighter truncate">{el.params.name}</h3>
+                                      {el.isAi && <Sparkles size={12} className="text-ai-accent" />}
+                                      <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider ${el.ok_wood && el.ok_alu && el.ok_frame ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
+                                         {el.ok_wood && el.ok_alu && el.ok_frame ? '✅ CONFORME' : '❌ NON CONFORME'}
+                                      </div>
+                                   </div>
+                                   <div className="flex gap-4 text-[10px] font-bold text-text-muted uppercase">
+                                      <span>{el.params.isVar ? `${el.params.epMin}-${el.params.epMax}` : el.params.ep}mm</span>
+                                      <span>{el.params.type}</span>
+                                      <span className="text-accent italic">{el.time}</span>
+                                   </div>
+                                </div>
+                                <div className="flex gap-2">
+                                   <button onClick={() => startEdit(el.id)} className="p-2.5 rounded-xl border border-border text-text-muted hover:text-accent hover:border-accent hover:bg-accent/5 transition-all"><Settings size={18}/></button>
+                                   <button onClick={() => deleteElement(el.id)} className="p-2.5 rounded-xl border border-border text-text-muted hover:text-danger hover:border-danger hover:bg-danger/5 transition-all"><Trash2 size={18}/></button>
+                                </div>
+                              </motion.div>
+                           ))}
+                        </>
+                     )}
+                  </div>
+               </div>
+
+               {/* Stats and AI */}
+               <div className="flex flex-col gap-6">
+                  <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm border-t-4 border-t-accent">
+                     <h3 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-6 flex items-center gap-2"><BarChart3 size={14}/> Graphique de Charges</h3>
+                     <div className="h-[200px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                           <BarChart data={statsData}>
+                              <XAxis dataKey="name" hide />
+                              <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px rgba(0,0,0,0.1)' }} />
+                              <Bar dataKey="charge" radius={[4, 4, 0, 0]}>
+                                 {statsData.map((e, i) => (
+                                   <Cell key={`cell-${i}`} fill={i % 2 === 0 ? "#2563EB" : "#38BDF8"} />
+                                 ))}
+                              </Bar>
+                           </BarChart>
+                        </ResponsiveContainer>
+                     </div>
+                     <div className="mt-6 flex items-center justify-between p-4 bg-bg rounded-2xl border border-border/40">
+                        <span className="text-[11px] font-bold text-text-muted uppercase">Santé Globale</span>
+                        {projectData.elements.length > 0 ? (
+                           <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full ${projectData.elements.every(e => e.ok_wood && e.ok_alu && e.ok_frame) ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger animate-pulse'}`}>
+                              {projectData.elements.every(e => e.ok_wood && e.ok_alu && e.ok_frame) ? 'CONFORME' : 'CRITIQUE'}
+                           </span>
+                        ) : (
+                           <span className="text-[10px] font-black text-text-muted uppercase bg-bg/20 px-2 py-0.5 rounded-full">Aucun Élément</span>
+                        )}
+                     </div>
+                  </div>
+
+                  <div className="bg-ai-accent/5 border-2 border-dashed border-ai-accent/30 rounded-3xl p-8 text-center flex flex-col items-center justify-center gap-5 relative overflow-hidden group">
+                     <div className="w-14 h-14 bg-white rounded-2xl shadow-lg flex items-center justify-center text-ai-accent"><FileText size={28}/></div>
+                     <div>
+                        <h4 className="font-black text-ai-accent text-sm uppercase tracking-widest mb-1">Importez vos Plans</h4>
+                        <p className="text-[10px] text-text-muted font-bold italic">Extraction automatique par IA Vision</p>
+                     </div>
+                     <label className="w-full bg-ai-accent text-white py-3 rounded-2xl font-black text-xs hover:filter hover:brightness-110 cursor-pointer shadow-lg shadow-ai-accent/20 flex items-center justify-center gap-2">
+                        Analyser un Plan <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => {
+                          const f = e.target.files?.[0]; if(f) handleAiExtraction(f);
+                        }} />
+                     </label>
+                  </div>
+               </div>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5 flex-1 overflow-hidden">
@@ -1049,10 +1204,16 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
             <div className="flex flex-col gap-5 overflow-y-auto scroller-hidden pr-1">
                <div className="bg-surface border border-border rounded-[10px] p-6 shadow-sm mb-4">
                   <div className="flex justify-between items-center mb-6">
-                     <h3 className="text-xs font-bold text-text-muted uppercase tracking-widest">Résultats Analytiques</h3>
-                     <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 ${calculations.okAlu ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
-                        {calculations.okAlu ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
-                        STATUT : {calculations.okAlu ? 'SÉCURISÉ' : 'DANGER'}
+                      <div className="flex items-center gap-3">
+                         <div className="w-10 h-10 bg-accent/10 rounded-xl flex items-center justify-center text-accent"><Calculator size={20} /></div>
+                         <div>
+                            <h2 className="font-black text-sm uppercase tracking-widest text-text-main leading-tight">Moteur de Calcul {activeTab==='dalle'?'Dalle':'Poutre'}</h2>
+                            <p className="text-[10px] font-bold text-text-muted uppercase tracking-widest mt-0.5">Normes CSA-S269.1 • Facteurs de sécurité actifs</p>
+                         </div>
+                      </div>
+                     <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center gap-1.5 ${(calculations.woodOk && calculations.okAlu && calculations.fOk) ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
+                        {(calculations.woodOk && calculations.okAlu && calculations.fOk) ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
+                        STATUT : {(calculations.woodOk && calculations.okAlu && calculations.fOk) ? 'CONFORME' : 'DANGER - NON CONFORME'}
                      </div>
                   </div>
                   
@@ -1200,6 +1361,29 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                   <div className="p-4 border-b border-border font-bold text-[12px] shrink-0">VÉRIFICATION DÉTAILLÉE</div>
                   <div className="flex-1 overflow-y-auto p-4 scroller-hidden">
                      <div className="space-y-4">
+                        <div className="pb-3 border-b border-bg">
+                           <div className="text-[10px] font-bold text-text-muted mb-2 uppercase tracking-wide">État des Composants</div>
+                           <div className="space-y-2">
+                              <div className="flex justify-between items-center text-[11px]">
+                                <span>Contreplaqué</span>
+                                <span className={`px-2 py-0.5 rounded text-[9px] font-black ${calculations.woodOk ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
+                                  {calculations.woodOk ? 'CONFORME' : 'ÉCHEC'}
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center text-[11px]">
+                                <span>Poutrelles Alu</span>
+                                <span className={`px-2 py-0.5 rounded text-[9px] font-black ${calculations.okAlu ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
+                                  {calculations.okAlu ? 'CONFORME' : 'ÉCHEC'}
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center text-[11px]">
+                                <span> Shore / Étaiement</span>
+                                <span className={`px-2 py-0.5 rounded text-[9px] font-black ${calculations.fOk ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
+                                  {calculations.fOk ? 'CONFORME' : 'ÉCHEC'}
+                                </span>
+                              </div>
+                           </div>
+                        </div>
                         <div className="pb-3 border-b border-bg">
                            <div className="text-[10px] font-bold text-text-muted mb-2 uppercase tracking-wide">A1 — Structure</div>
                            <div className="space-y-1.5">
