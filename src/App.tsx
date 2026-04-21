@@ -402,6 +402,8 @@ export default function App() {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiProvider, setAiProvider] = useState<'google' | 'groq' | 'openrouter' | 'huggingface'>('google');
   const [pendingExtractions, setPendingExtractions] = useState<any[]>([]);
+  const [localGeminiKey, setLocalGeminiKey] = useState<string>(() => localStorage.getItem('COFFRAGE_GEMINI_KEY') || "");
+  const [showKeyInput, setShowKeyInput] = useState(false);
   
   const aiRef = useRef<GoogleGenAI | null>(null);
 
@@ -662,35 +664,68 @@ export default function App() {
 
       let extracted: any[] = [];
 
-      const res = await fetch("/api/ai-extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          base64,
-          mimeType: file.type,
-          provider: aiProvider,
-          models: aiProvider === 'openrouter' ? [selectedOrModel] : undefined
-        })
-      });
+      // MODE SECOURS POUR GITHUB PAGES (Client-side Gemini)
+      const viteKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
+      if (aiProvider === 'google' && (localGeminiKey || viteKey)) {
+        const key = localGeminiKey || viteKey;
+        const genAI = new GoogleGenAI(key);
+        
+        const response = await genAI.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: [{
+            parts: [
+              { text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
+                Retourne UNIQUEMENT un objet JSON: { "elements": [ { "name": string, "thickness": number, "type": "DALLE"|"POUTRE" } ] }.` },
+              { inlineData: { data: base64, mimeType: file.type || "image/jpeg" } }
+            ]
+          }],
+          config: { responseMimeType: "application/json" }
+        });
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        if (errData.error?.includes("GEMINI_API_KEY")) {
-          throw new Error("Clé API Gemini manquante. Configurez GEMINI_API_KEY sur le serveur ou dans GitHub Secrets.");
+        const text = response.text;
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+        extracted = parsed.elements || [];
+      } else {
+        // MODE NORMAL (Backend Proxy)
+        const res = await fetch("/api/ai-extract", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            base64,
+            mimeType: file.type,
+            provider: aiProvider,
+            models: aiProvider === 'openrouter' ? [selectedOrModel] : undefined
+          })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          
+          // Si on est sur GitHub Pages et que ça échoue, c'est probablement car le serveur n'existe pas
+          if (res.status === 404 || errData.error?.includes("failed to fetch")) {
+             setShowKeyInput(true);
+             throw new Error("Le serveur d'analyse est absent sur ce domaine statique. Veuillez configurer votre clé locale pour continuer.");
+          }
+
+          if (errData.error?.includes("GEMINI_API_KEY")) {
+            setShowKeyInput(true);
+            throw new Error("Clé API Gemini manquante sur le serveur. Configurez GEMINI_API_KEY.");
+          }
+          throw new Error(errData.error || `Erreur serveur: ${res.status}`);
         }
-        throw new Error(errData.error || `Erreur serveur: ${res.status}`);
-      }
 
-      const data = await res.json();
-      
-      if (aiProvider === 'openrouter' && data.candidates) {
-        setExtractionCandidates(data.candidates);
-        showToast(`Plusieurs modèles ont répondu. Choisissez le meilleur résultat.`, "info");
-        setIsAiLoading(false);
-        return;
-      }
+        const data = await res.json();
+        
+        if (aiProvider === 'openrouter' && data.candidates) {
+          setExtractionCandidates(data.candidates);
+          showToast(`Plusieurs modèles ont répondu. Choisissez le meilleur résultat.`, "info");
+          setIsAiLoading(false);
+          return;
+        }
 
-      extracted = data.elements || [];
+        extracted = data.elements || [];
+      }
 
       if (extracted.length === 0) {
         showToast("Aucune donnée détectée. Essayez une image plus claire.", "info");
@@ -1120,7 +1155,53 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
           <p className="text-[11px] text-white/70 leading-relaxed">
             Analyse vos plans PDF/IMG. Configurez vos clés API pour utiliser Gemini ou Groq.
           </p>
-          <div className="mt-3 text-[10px] font-mono opacity-50">Status: {isAiLoading ? 'Analyse...' : 'Prêt à analyser'}</div>
+          <div className="mt-3 flex items-center justify-between">
+            <div className="text-[10px] font-mono opacity-50">Status: {isAiLoading ? 'Analyse...' : 'Prêt'}</div>
+            <button 
+              onClick={() => setShowKeyInput(!showKeyInput)}
+              className={`p-1 rounded transition-colors ${localGeminiKey ? 'text-success' : 'text-white/20 hover:text-white'}`}
+              title="Configuration Clé Locale"
+            >
+              <Settings2 size={12} />
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {showKeyInput && (
+              <motion.div 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="mt-3 pt-3 border-t border-white/5 space-y-2 overflow-hidden"
+              >
+                <div className="text-[9px] font-bold text-white/30 uppercase tracking-widest">Clé Gemini (GitHub Pages)</div>
+                <div className="relative">
+                  <input 
+                    type="password"
+                    placeholder="AIzaSy..."
+                    value={localGeminiKey}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setLocalGeminiKey(val);
+                      localStorage.setItem('COFFRAGE_GEMINI_KEY', val);
+                    }}
+                    className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-[10px] outline-none focus:border-ai-accent transition-colors"
+                  />
+                  {localGeminiKey && (
+                    <button 
+                      onClick={() => { setLocalGeminiKey(""); localStorage.removeItem('COFFRAGE_GEMINI_KEY'); }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-white/20 hover:text-danger"
+                    >
+                      <Trash size={10} />
+                    </button>
+                  )}
+                </div>
+                <p className="text-[8px] text-white/40 leading-tight italic">
+                  Nécessaire car ce domaine (GitHub) ne supporte pas de serveur. La clé est stockée uniquement sur votre navigateur.
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Firebase Account Panel */}
