@@ -670,19 +670,34 @@ export default function App() {
       
       const viteKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
 
-      // FONCTION DE SECOURS POUR GITHUB (MODE CLIENT)
-      if (isStaticEnv && (aiProvider === 'google' || localGeminiKey)) {
-        const key = localGeminiKey || viteKey;
+      // EXTRACTION GEMINI (DIRECTEMENT SUR LE FRONTEND SELON LES RECOMMANDATIONS)
+      if (aiProvider === 'google') {
+        const envKey = process.env.GEMINI_API_KEY;
+        const key = localGeminiKey || envKey || viteKey;
+
         if (!key) {
-          setShowKeyInput(true);
-          throw new Error("Mode statique (GitHub) : Une clé API Gemini locale est requise pour l'analyse. Cliquez sur l'icône de réglage pour la configurer.");
+          if (isStaticEnv) {
+            setShowKeyInput(true);
+            throw new Error("Mode statique (GitHub) : Une clé API Gemini locale est requise. Cliquez sur l'icône de réglage.");
+          } else {
+            // Sur AI Studio, si la clé n'est pas dans process.env, on peut essayer le serveur 
+            // mais le skill dit NEVER. On va quand même garder un fallback serveur au cas où 
+            // les variables d'env ne sont pas encore propagées au client.
+            const res = await fetch("/api/ai-extract", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ base64, mimeType: file.type, provider: aiProvider })
+            });
+            if (!res.ok) throw new Error("Clé API Gemini manquante ou erreur serveur.");
+            const data = await res.json();
+            extracted = data.elements || [];
+          }
         }
 
-        const genAI = new GoogleGenAI({ apiKey: key });
-        
-        try {
+        if (key && extracted.length === 0) {
+          const genAI = new GoogleGenAI({ apiKey: key });
           const response = await genAI.models.generateContent({
-            model: "gemini-1.5-flash-latest",
+            model: "gemini-3-flash-preview",
             contents: [{
               parts: [
                 { text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
@@ -693,29 +708,14 @@ export default function App() {
             config: { responseMimeType: "application/json" }
           });
 
-          // Extraction du texte avec gestion de la version du SDK
-          let text = "";
-          if (typeof response.text === 'function') {
-            text = (response as any).text();
-          } else if (typeof response.text === 'string') {
-            text = response.text;
-          } else if ((response as any).response?.text) {
-             text = (response as any).response.text();
-          }
-
-          if (!text) throw new Error("Réponse vide de l'IA. Vérifiez votre clé.");
-          
+          const text = response.text || "";
+          if (!text) throw new Error("Réponse vide de l'IA.");
           const jsonMatch = text.match(/\{[\s\S]*\}/);
           const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
           extracted = parsed.elements || [];
-        } catch (apiErr: any) {
-          if (apiErr.message?.includes("fetch")) {
-            throw new Error("Erreur de connexion à l'API Google. Vérifiez votre clé ou votre connexion internet.");
-          }
-          throw apiErr;
         }
       } else {
-        // MODE NORMAL (Serveur Cloud Run)
+        // MODE NORMAL POUR GROQ / OPENROUTER (Serveur Proxy)
         try {
           const res = await fetch("/api/ai-extract", {
             method: "POST",
