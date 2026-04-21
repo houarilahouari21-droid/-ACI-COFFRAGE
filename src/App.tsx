@@ -662,95 +662,35 @@ export default function App() {
 
       let extracted: any[] = [];
 
-      if (aiProvider === 'google') {
-        const geminiKey = process.env.GEMINI_API_KEY;
-        if (!geminiKey) {
-            throw new Error("Clé API Gemini manquante. Veuillez la configurer dans les paramètres (GEMINI_API_KEY).");
-        }
+      const res = await fetch("/api/ai-extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base64,
+          mimeType: file.type,
+          provider: aiProvider,
+          models: aiProvider === 'openrouter' ? [selectedOrModel] : undefined
+        })
+      });
 
-        if (!aiRef.current) {
-          aiRef.current = new GoogleGenAI({ apiKey: geminiKey });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        if (errData.error?.includes("GEMINI_API_KEY")) {
+          throw new Error("Clé API Gemini manquante. Configurez GEMINI_API_KEY sur le serveur ou dans GitHub Secrets.");
         }
-        
-        try {
-            const response = await aiRef.current.models.generateContent({ 
-              model: "gemini-3-flash-preview",
-              contents: [
-                {
-                  parts: [
-                    {
-                      inlineData: {
-                        data: base64,
-                        mimeType: file.type
-                      }
-                    },
-                    {
-                      text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
-                      Pour chaque élément trouvé, donne :
-                      1. Le nom unique identifiant (ex: DALLE D1, POUTRE P2).
-                      2. L'épaisseur ou profondeur brute en millimètres (mm).
-                      3. Le type : "DALLE" ou "POUTRE".
-                      
-                      Réponds UNIQUEMENT avec un tableau JSON valide.`
-                    }
-                  ]
-                }
-              ],
-              config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      name: { type: Type.STRING },
-                      thickness: { type: Type.NUMBER },
-                      type: { type: Type.STRING, enum: ["DALLE", "POUTRE"] }
-                    },
-                    required: ["name", "thickness", "type"]
-                  }
-                }
-              }
-            });
-            
-            const content = response.text;
-            if (!content) throw new Error("Aucune réponse de Gemini.");
-            extracted = JSON.parse(content);
-        } catch (apiErr: any) {
-            if (apiErr.message?.includes("API_KEY_INVALID")) {
-                throw new Error("Clé API Gemini invalide. Veuillez vérifier votre clé dans les paramètres.");
-            }
-            throw apiErr;
-        }
-      } else {
-        // Groq still goes through the proxy to handle CORS
-        const res = await fetch("/api/ai-extract", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            base64,
-            mimeType: file.type,
-            provider: aiProvider,
-            models: aiProvider === 'openrouter' ? [selectedOrModel] : undefined
-          })
-        });
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `Erreur serveur: ${res.status}`);
-        }
-
-        const data = await res.json();
-        
-        if (aiProvider === 'openrouter' && data.candidates) {
-          setExtractionCandidates(data.candidates);
-          showToast(`Plusieurs modèles ont répondu. Choisissez le meilleur résultat.`, "info");
-          setIsAiLoading(false);
-          return;
-        }
-        
-        extracted = data.elements || [];
+        throw new Error(errData.error || `Erreur serveur: ${res.status}`);
       }
+
+      const data = await res.json();
+      
+      if (aiProvider === 'openrouter' && data.candidates) {
+        setExtractionCandidates(data.candidates);
+        showToast(`Plusieurs modèles ont répondu. Choisissez le meilleur résultat.`, "info");
+        setIsAiLoading(false);
+        return;
+      }
+
+      extracted = data.elements || [];
 
       if (extracted.length === 0) {
         showToast("Aucune donnée détectée. Essayez une image plus claire.", "info");
@@ -1437,7 +1377,7 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                   <div className="bg-surface border border-border rounded-3xl p-6 shadow-sm border-t-4 border-t-accent">
                      <h3 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-6 flex items-center gap-2"><BarChart3 size={14}/> Graphique de Charges</h3>
                      <div className="h-[200px]">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                            <BarChart data={statsData}>
                               <XAxis dataKey="name" hide />
                               <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px rgba(0,0,0,0.1)' }} />

@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import Groq from "groq-sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
@@ -23,7 +24,35 @@ async function startServer() {
       
       if (!base64) return res.status(400).json({ error: "Image manquante" });
 
-      if (provider === "groq") {
+      if (provider === "google") {
+        const geminiKey = process.env.GEMINI_API_KEY;
+        if (!geminiKey) return res.status(500).json({ error: "Clé API Gemini (GEMINI_API_KEY) manquante sur le serveur." });
+
+        const genAI = new GoogleGenerativeAI(geminiKey);
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+        const prompt = `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
+        Retourne UNIQUEMENT un objet JSON: { "elements": [ { "name": string, "thickness": number, "type": "DALLE"|"POUTRE" } ] }.`;
+
+        const result = await model.generateContent([
+          prompt,
+          {
+            inlineData: {
+              data: base64,
+              mimeType: mimeType || "image/jpeg"
+            }
+          }
+        ]);
+
+        const response = await result.response;
+        let text = response.text();
+        
+        // Nettoyage Markdown si nécessaire
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+        return res.json({ elements: parsed.elements || [] });
+
+      } else if (provider === "groq") {
         const groqKey = process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY;
         if (!groqKey) return res.status(500).json({ error: "GROQ_API_KEY manquante sur le serveur." });
 
