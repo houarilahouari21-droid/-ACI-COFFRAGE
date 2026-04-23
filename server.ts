@@ -4,7 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import Groq from "groq-sdk";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
@@ -28,24 +28,20 @@ async function startServer() {
         const geminiKey = process.env.GEMINI_API_KEY;
         if (!geminiKey) return res.status(500).json({ error: "Clé API Gemini (GEMINI_API_KEY) manquante sur le serveur." });
 
-        const genAI = new GoogleGenerativeAI(geminiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const genAI = new GoogleGenAI({ apiKey: geminiKey });
 
-        const prompt = `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
-        Retourne UNIQUEMENT un objet JSON: { "elements": [ { "name": string, "thickness": number, "type": "DALLE"|"POUTRE" } ] }.`;
+        const result = await genAI.models.generateContent({
+          model: "gemini-1.5-flash",
+          contents: [{
+            parts: [
+              { text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
+              Retourne UNIQUEMENT un objet JSON: { "elements": [ { "name": string, "thickness": number, "type": "DALLE"|"POUTRE" } ] }.` },
+              { inlineData: { data: base64, mimeType: mimeType || "image/jpeg" } }
+            ]
+          }]
+        });
 
-        const result = await model.generateContent([
-          prompt,
-          {
-            inlineData: {
-              data: base64,
-              mimeType: mimeType || "image/jpeg"
-            }
-          }
-        ]);
-
-        const response = await result.response;
-        let text = response.text();
+        const text = result.text || "";
         
         // Nettoyage Markdown si nécessaire
         const jsonMatch = text.match(/\{[\s\S]*\}/);
