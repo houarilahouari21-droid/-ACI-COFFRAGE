@@ -459,15 +459,19 @@ export default function App() {
     const conc = (din / 12) * CONCRETE_PCF;
     const total = conc + formDead + formLive;
     
-    // A2 - Contreplaqué & 4x4
+    // A2 - Contreplaqué & 4x4 (Secondary Beams / Joists)
     const wb = safeDiv(total, 12);
     const wd = safeDiv(total - formLive, 12);
     const lb_ply = wb > 0 ? Math.sqrt(10 * PLY.Fb * PLY.KS / wb) : Infinity;
     const ld_ply = wd > 0 ? Math.pow(145 * PLY.E * PLY.I / (DEFLECTION_LIMIT * wd), 1/3) : Infinity;
     const lr_ply = wb > 0 ? (5/3) * PLY.Frs * PLY.lbQ / wb : Infinity;
     const lm_ply = Math.min(lb_ply, ld_ply, lr_ply);
-    const sp = STD_SPACING.find(s => s <= lm_ply) || STD_SPACING[STD_SPACING.length - 1];
     
+    // The "standard" suggested spacing for plywood
+    const sp_suggested = STD_SPACING.find(s => s <= lm_ply) || STD_SPACING[STD_SPACING.length - 1];
+    
+    // Use user-defined spacing for beam calculations
+    const sp = formChoix; 
     const wcft = (sp / 12) * total;
     const wdft = (sp / 12) * (total - formLive);
     const wcin = safeDiv(wcft, 12);
@@ -475,6 +479,9 @@ export default function App() {
     const lb_wood = wcin > 0 ? Math.sqrt(10 * WOOD.Fb_adj * WOOD.S / wcin) : Infinity;
     const ld_wood = wdin > 0 ? Math.pow(145 * WOOD.E * WOOD.I / (DEFLECTION_LIMIT * wdin), 1/3) : Infinity;
     const lm_wood = Math.min(lb_wood, ld_wood);
+    
+    const woodUtil = (sp / lm_wood) * 100;
+    const plyUtil = (sp / lm_ply) * 100;
     
     // A3 - Aluma
     const isDalle = activeTab === 'dalle';
@@ -495,6 +502,7 @@ export default function App() {
     return {
       din, conc, total,
       sp, wcft, lm_wood, woodOk: formChoix <= lm_wood,
+      woodUtil, plyUtil, lm_ply,
       loadAlu, capAlu, okAlu, md, deflAlu, dOk,
       pt, fOk,
       ep_min_val, depth_max: depth
@@ -540,6 +548,8 @@ export default function App() {
       params,
       total: Math.round(calculations.total),
       lm: fmt(calculations.lm_wood, 2),
+      woodUtil: calculations.woodUtil,
+      plyUtil: calculations.plyUtil,
       ok_wood: calculations.woodOk,
       ok_alu: calculations.okAlu,
       ok_defl: calculations.dOk,
@@ -695,20 +705,16 @@ export default function App() {
         }
 
         if (key && extracted.length === 0) {
-          const genAI = new GoogleGenAI({ apiKey: key });
-          const response = await genAI.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: [{
-              parts: [
-                { text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
+          const genAI = new GoogleGenAI(key);
+          const aiModelName = "gemini-1.5-flash";
+          const model = genAI.getGenerativeModel({ model: aiModelName });
+          const response = await model.generateContent([
+            { text: `Tu es un expert en coffrage. Analyse ce plan de structure et extrais les informations sur les dalles et les poutres.
                   Retourne UNIQUEMENT un objet JSON: { "elements": [ { "name": string, "thickness": number, "type": "DALLE"|"POUTRE" } ] }.` },
-                { inlineData: { data: base64, mimeType: file.type || "image/jpeg" } }
-              ]
-            }],
-            config: { responseMimeType: "application/json" }
-          });
+            { inlineData: { data: base64, mimeType: file.type || "image/jpeg" } }
+          ]);
 
-          const text = response.text || "";
+          const text = response.response.text();
           if (!text) throw new Error("Réponse vide de l'IA.");
           const jsonMatch = text.match(/\{[\s\S]*\}/);
           const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : text);
@@ -991,6 +997,18 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                               <div className="font-mono text-xs space-y-1">
                                 <div className="text-text-muted">Charge Totale (D+L):</div>
                                 <div className="font-bold text-text-main">{fmt(el.total - formLive)} + {fmt(formLive)} PSF = {fmt(el.total)} PSF</div>
+                              </div>
+                              <div className="font-mono text-xs space-y-1 col-span-2 mt-2 pt-2 border-t border-border/50">
+                                <div className="text-[10px] text-accent font-bold uppercase mb-1">Efficacité du Matériau</div>
+                                <div className="flex items-center gap-4">
+                                  <div className="flex-1 space-y-1">
+                                    <div className="text-[9px] text-text-muted uppercase">Utilisation Solives Bois ({(el as any).params.cho}" @ {(el as any).lm}")</div>
+                                    <div className="h-1.5 w-full bg-bg rounded-full overflow-hidden">
+                                      <div className={`h-full ${(el as any).woodUtil > 100 ? 'bg-danger' : 'bg-success'}`} style={{ width: `${Math.min((el as any).woodUtil, 100)}%` }} />
+                                    </div>
+                                  </div>
+                                  <div className={`text-xs font-black ${(el as any).woodUtil > 100 ? 'text-danger' : 'text-success'}`}>{fmt((el as any).woodUtil, 1)}%</div>
+                                </div>
                               </div>
                             </div>
                           </section>
@@ -1580,13 +1598,6 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                             placeholder="SECTION-A101"
                           />
                        </div>
-                       <div className="flex flex-col gap-1.5">
-                          <label className="text-[10px] font-bold text-text-light uppercase tracking-widest">Type de Structure</label>
-                          <select className="p-3 border border-border rounded-lg text-[13px] outline-none duration-200 bg-white">
-                             <option>{activeTab==='dalle'?'Dalle Pleine Béton':'Poutre Murée'}</option>
-                             <option>Structure Légère</option>
-                          </select>
-                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -1633,6 +1644,39 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
                             onChange={(e) => setFormSpan(+e.target.value)}
                           >
                              {[4,5,6,7].map(v => <option key={v} value={v}>{v}'</option>)}
+                          </select>
+                       </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                       <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] font-bold text-text-light uppercase tracking-widest">Espacement Solives (po)</label>
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="number" 
+                              className={`w-full p-3 border rounded-lg text-[13px] outline-none duration-200 focus:border-accent ${calculations.woodOk ? 'border-border' : 'border-danger bg-danger/5 text-danger'}`}
+                              value={formChoix}
+                              onChange={(e) => setFormChoix(+e.target.value)}
+                            />
+                            <div className={`px-2 py-1 rounded text-[10px] font-black whitespace-nowrap ${calculations.woodOk ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
+                              {fmt(calculations.woodUtil, 0)}%
+                            </div>
+                          </div>
+                          <div className="text-[9px] text-text-muted italic flex justify-between">
+                            <span>Suggéré : {calculations.sp}"</span>
+                            <span>Max : {fmt(calculations.lm_wood, 1)}"</span>
+                          </div>
+                       </div>
+                       <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] font-bold text-text-light uppercase tracking-widest">Type de Support</label>
+                          <select 
+                            className="p-3 border border-border rounded-lg text-[13px] outline-none duration-200 bg-white"
+                            value={formSType}
+                            onChange={(e) => setFormSType(e.target.value as any)}
+                            disabled={activeTab === 'poutre'}
+                          >
+                             <option value="simple">Simple</option>
+                             <option value="double">Double (Chevauchement)</option>
                           </select>
                        </div>
                     </div>
