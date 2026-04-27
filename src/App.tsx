@@ -905,6 +905,15 @@ CHARGES MORTES DU COFFRAGE : ${Math.round(formDead)} LBS/PI²<br/>
 CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
 <strong>CHARGES TOTAUX : ${Math.round(calculations.total)} LBS/PI²</strong>`.trim();
 
+  const summaryTextMetric = `
+<strong>Résumé de Charge</strong><br/>
+<strong>${formName.trim() || (activeTab === 'dalle' ? 'DALLE' : 'POUTRE')} ÉPAISSEUR : ${formIsVar ? formEpMin + '@' + formEpMax + ' mm' : formEp + ' mm'}</strong><br/>
+<strong>CHARGE DE CONCEPTION</strong><br/>
+CHARGES VIVES DE BÉTON : ${Math.round(calculations.conc)} LBS/PI²<br/>
+CHARGES MORTES DU COFFRAGE : ${Math.round(formDead)} LBS/PI²<br/>
+CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
+<strong>CHARGES TOTAUX : ${Math.round(calculations.total)} LBS/PI²</strong>`.trim();
+
   return (
     <div className="flex bg-bg h-screen overflow-hidden text-text-main font-sans">
       {/* Toast Notification */}
@@ -1740,10 +1749,18 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
             <div className="flex flex-col gap-5 overflow-hidden">
                <div className="bg-surface border border-border rounded-[10px] p-5 shadow-sm">
                   <div className="flex justify-between items-center mb-4">
-                     <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Résumé de Charge</span>
+                     <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Résumé de Charge (Impérial)</span>
                      <button onClick={() => copySummary(document.getElementById('summary-tool')?.innerText || '')} className="text-accent hover:underline text-[10px] font-bold">COPIER</button>
                   </div>
                   <div id="summary-tool" className="text-[11px] leading-relaxed font-mono uppercase bg-bg/30 p-4 rounded-lg border border-border/50" dangerouslySetInnerHTML={{ __html: summaryText }} />
+               </div>
+
+               <div className="bg-surface border border-border rounded-[10px] p-5 shadow-sm">
+                  <div className="flex justify-between items-center mb-4">
+                     <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Résumé de Charge (Métrique)</span>
+                     <button onClick={() => copySummary(document.getElementById('summary-tool-metric')?.innerText || '')} className="text-accent hover:underline text-[10px] font-bold">COPIER</button>
+                  </div>
+                  <div id="summary-tool-metric" className="text-[11px] leading-relaxed font-mono uppercase bg-bg/30 p-4 rounded-lg border border-border/50" dangerouslySetInnerHTML={{ __html: summaryTextMetric }} />
                </div>
 
                <div className="bg-surface border border-border rounded-[10px] shadow-sm flex flex-col flex-1 overflow-hidden">
