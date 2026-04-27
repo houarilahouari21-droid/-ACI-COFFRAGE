@@ -442,6 +442,7 @@ export default function App() {
   const [formSpan, setFormSpan] = useState(7);
   const [formSType, setFormSType] = useState("double");
   const [formChoix, setFormChoix] = useState(48);
+  const [summaryUnit, setSummaryUnit] = useState<'imperial' | 'metric'>('imperial');
 
   // --- Persistence Legacy Cleanup ---
   useEffect(() => {
@@ -1749,18 +1750,26 @@ CHARGES VIVES DES TRAVAILLEURS : ${Math.round(formLive)} LBS/PI²<br/>
             <div className="flex flex-col gap-5 overflow-hidden">
                <div className="bg-surface border border-border rounded-[10px] p-5 shadow-sm">
                   <div className="flex justify-between items-center mb-4">
-                     <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Résumé de Charge (Impérial)</span>
-                     <button onClick={() => copySummary(document.getElementById('summary-tool')?.innerText || '')} className="text-accent hover:underline text-[10px] font-bold">COPIER</button>
+                     <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Résumé de Charge</span>
+                     <div className="flex items-center gap-3">
+                        <div className="flex bg-bg rounded-md p-0.5 border border-border">
+                           <button 
+                             onClick={() => setSummaryUnit('imperial')}
+                             className={`px-2 py-1 text-[9px] font-bold rounded transition-all ${summaryUnit === 'imperial' ? 'bg-white shadow-sm text-accent' : 'text-text-muted hover:text-text-main'}`}
+                           >
+                              IMPÉRIAL
+                           </button>
+                           <button 
+                             onClick={() => setSummaryUnit('metric')}
+                             className={`px-2 py-1 text-[9px] font-bold rounded transition-all ${summaryUnit === 'metric' ? 'bg-white shadow-sm text-accent' : 'text-text-muted hover:text-text-main'}`}
+                           >
+                              MÉTRIQUE
+                           </button>
+                        </div>
+                        <button onClick={() => copySummary(document.getElementById('summary-tool')?.innerText || '')} className="text-accent hover:underline text-[10px] font-bold">COPIER</button>
+                     </div>
                   </div>
-                  <div id="summary-tool" className="text-[11px] leading-relaxed font-mono uppercase bg-bg/30 p-4 rounded-lg border border-border/50" dangerouslySetInnerHTML={{ __html: summaryText }} />
-               </div>
-
-               <div className="bg-surface border border-border rounded-[10px] p-5 shadow-sm">
-                  <div className="flex justify-between items-center mb-4">
-                     <span className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Résumé de Charge (Métrique)</span>
-                     <button onClick={() => copySummary(document.getElementById('summary-tool-metric')?.innerText || '')} className="text-accent hover:underline text-[10px] font-bold">COPIER</button>
-                  </div>
-                  <div id="summary-tool-metric" className="text-[11px] leading-relaxed font-mono uppercase bg-bg/30 p-4 rounded-lg border border-border/50" dangerouslySetInnerHTML={{ __html: summaryTextMetric }} />
+                  <div id="summary-tool" className="text-[11px] leading-relaxed font-mono uppercase bg-bg/30 p-4 rounded-lg border border-border/50" dangerouslySetInnerHTML={{ __html: summaryUnit === 'imperial' ? summaryText : summaryTextMetric }} />
                </div>
 
                <div className="bg-surface border border-border rounded-[10px] shadow-sm flex flex-col flex-1 overflow-hidden">
